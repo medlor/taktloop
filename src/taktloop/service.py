@@ -2,22 +2,18 @@
 
 from __future__ import annotations
 
-import re
 import secrets
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from pathlib import PurePosixPath
 from typing import Any
 
 from taktloop.models import (
     ArtifactIn, Claim, OpenStep, StepContext, TaskSummary,
 )
+from taktloop.rules import Rejected, check_artifacts, same_token, waiting_for
 from taktloop.store import ArtifactRow, StepRunRow, Store, TaskRow, Tx
 from taktloop.workflow import DONE, Workflow
-
-_SHA = re.compile(r"[0-9a-f]{40}")
-
 
 @dataclass(frozen=True)
 class Caller:
@@ -30,12 +26,6 @@ class Caller:
         return f"{self.subject} ({self.executor})" if self.executor else self.subject
 
 
-class Rejected(Exception):
-    def __init__(self, reason: str) -> None:
-        super().__init__(reason)
-        self.reason = reason
-
-
 @dataclass
 class _Ids:
     """Task/step-run the current operation touched, for its history event."""
@@ -45,20 +35,6 @@ class _Ids:
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
-
-
-def _same_token(a: str, b: str) -> bool:
-    return secrets.compare_digest(a.encode(), b.encode())
-
-
-def _check_artifact(a: ArtifactIn) -> None:
-    p = PurePosixPath(a.path)
-    if not a.path.strip() or p.is_absolute() or ".." in p.parts:
-        raise Rejected(f"artifact {a.name!r}: path must be non-empty, relative and without '..'")
-    if not _SHA.fullmatch(a.commit):
-        raise Rejected(f"artifact {a.name!r}: commit must be a 40-character lowercase hex SHA")
-    if not a.branch.strip():
-        raise Rejected(f"artifact {a.name!r}: branch must not be empty")
 
 
 class Service:
@@ -110,20 +86,9 @@ class Service:
         run = self._load(tx, ids, step_id)
         if run.status != "claimed":
             raise Rejected("step is not claimed")
-        if not _same_token(run.claim_token, claim_token):
+        if not same_token(run.claim_token, claim_token):
             raise Rejected("claim token does not match")
         return run
-
-    def _waiting_for(self, run: StepRunRow | None) -> str:
-        if run is None:
-            return "done"
-        step = self._wf.step(run.step)
-        if run.status == "claimed":
-            until = run.lease_expires_at.astimezone(timezone.utc).strftime("%H:%M")
-            return f"{run.step} in progress by {run.claimed_by}, lease until {until} UTC"
-        if step.kind == "human_gate":
-            return f"waiting for {step.role} decision at {run.step}"
-        return f"waiting for a {step.role} to pick up {run.step}"
 
     def _summary(self, tx: Tx, task: TaskRow) -> TaskSummary:
         run = None
@@ -133,7 +98,10 @@ class Service:
         return TaskSummary(
             id=task.id, title=task.title, status=task.status,
             current_step=run.step if run else None, step_id=run.id if run else None,
-            waiting_for=self._waiting_for(run))
+            waiting_for=waiting_for(
+                self._wf.step(run.step) if run else None,
+                run.status if run else "open", run.claimed_by if run else None,
+                run.lease_expires_at if run else None))
 
     def _open_step(self, tx: Tx, task_id: int, step: str) -> int:
         last = tx.last_step_run(task_id, step)
@@ -206,11 +174,7 @@ class Service:
             step = self._wf.step(run.step)
             if outcome != "completed":
                 raise Rejected(f"outcome must be 'completed', got {outcome!r}")
-            missing = [n for n in step.required_artifacts if n not in {a.name for a in artifacts}]
-            if missing:
-                raise Rejected(f"missing required artifacts: {', '.join(missing)}")
-            for a in artifacts:
-                _check_artifact(a)
+            check_artifacts(step.required_artifacts, artifacts)
             for a in artifacts:
                 tx.insert_artifact(ArtifactRow(run.task_id, run.id, a.name, a.path, a.commit,
                                                a.branch))
@@ -233,7 +197,7 @@ class Service:
                 raise Rejected("reason is required")
             if run.status != "claimed":
                 raise Rejected("step is not claimed")
-            if not force and not (claim_token and _same_token(run.claim_token, claim_token)):
+            if not force and not (claim_token and same_token(run.claim_token, claim_token)):
                 raise Rejected("claim token does not match")
             tx.update_step_run(run.id, status="open", claimed_by=None, claim_token=None,
                                lease_expires_at=None)

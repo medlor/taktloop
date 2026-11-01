@@ -1,0 +1,54 @@
+"""Pure, state-free rules for steps: validation, token check, waiting-for text."""
+
+from __future__ import annotations
+
+import re
+import secrets
+from collections.abc import Iterable
+from datetime import datetime, timezone
+from pathlib import PurePosixPath
+
+from taktloop.models import ArtifactIn
+from taktloop.workflow import Step
+
+_SHA = re.compile(r"[0-9a-f]{40}")
+
+
+class Rejected(Exception):
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+def same_token(a: str, b: str) -> bool:
+    return secrets.compare_digest(a.encode(), b.encode())
+
+
+def check_artifacts(required: Iterable[str], artifacts: list[ArtifactIn]) -> None:
+    """Raise Rejected unless every required name is present and every artifact is well-formed."""
+    have = {a.name for a in artifacts}
+    missing = [n for n in required if n not in have]
+    if missing:
+        raise Rejected(f"missing required artifacts: {', '.join(missing)}")
+    for a in artifacts:
+        p = PurePosixPath(a.path)
+        if not a.path.strip() or p.is_absolute() or ".." in p.parts:
+            raise Rejected(
+                f"artifact {a.name!r}: path must be non-empty, relative and without '..'")
+        if not _SHA.fullmatch(a.commit):
+            raise Rejected(f"artifact {a.name!r}: commit must be a 40-character lowercase hex SHA")
+        if not a.branch.strip():
+            raise Rejected(f"artifact {a.name!r}: branch must not be empty")
+
+
+def waiting_for(step: Step | None, status: str = "open", claimed_by: str | None = None,
+                lease_expires_at: datetime | None = None) -> str:
+    """Spec 6.5 text for the current step run; step None means the task is done."""
+    if step is None:
+        return "done"
+    if status == "claimed":
+        until = lease_expires_at.astimezone(timezone.utc).strftime("%H:%M")
+        return f"{step.name} in progress by {claimed_by}, lease until {until} UTC"
+    if step.kind == "human_gate":
+        return f"waiting for {step.role} decision at {step.name}"
+    return f"waiting for a {step.role} to pick up {step.name}"
