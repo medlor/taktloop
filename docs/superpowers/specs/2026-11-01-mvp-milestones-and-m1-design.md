@@ -86,7 +86,8 @@ Module boundaries (dependency direction top to bottom; nothing points upward):
 
 **Seams for later milestones** (present in M1, trivially filled):
 
-- **Caller identity:** every `service` operation takes a `Caller(subject, roles)`. In M1 `mcp_server` builds it from the MCP session: `Caller("local/<first 8 chars of the mcp-session-id header>", roles={"*"})` **[builder call]**. So ownership is real in M1: session B can't heartbeat, complete or release a step session A holds, and `task show` names the holding session. The CLI's own calls appear as `local/<its session>` too. M2 replaces this one function with token validation (subject from the token).
+- **Caller identity:** every `service` operation takes a `Caller(subject, roles, executor)`. In M1 `mcp_server` always passes `Caller("local", roles={"*"}, executor=<the MCP client's clientInfo name>)`. M2 replaces this one function with token validation (subject from the token).
+- **Claim ownership without identities** **[builder call]**: `claim_step` returns a random **claim token**; `heartbeat`, `complete_step` and `release_step` require it. Session B therefore can't heartbeat, complete or release a step session A holds. (An earlier draft used the `mcp-session-id` header, but the stateless MCP protocol `2026-07-28`, which `mcp` 2.3 uses by default, sends none.) `task show` names the holder as `local (claude-code)`, from the client's name. In M2 the token's subject is checked as well.
 - **Stuck claims:** if a session crashes, its claim blocks the step until the lease expires (§6.4). `taktloop release <step_id> --force --reason TEXT` lets the human free it immediately (recorded as a forced release) **[builder call]**.
 - **History is the audit log:** every operation that changes state writes one `events` row (§6.1) with caller, operation, task, step and outcome. M2 adds denied calls and roles; the table already has the columns.
 - **Step `kind`:** the workflow loader accepts `agent` and `human_gate` in M1 and rejects other kinds with a clear "not supported yet" error. M3 adds `code` and gate `check`.
@@ -102,7 +103,7 @@ Module boundaries (dependency direction top to bottom; nothing points upward):
 | Table | Columns (essentials) |
 | --- | --- |
 | `tasks` | `id` (int), `title`, `request` (text), `status` (`active` / `done` / `cancelled`), `created_by`, `created_at` |
-| `step_runs` | `id` (int, the `step_id` used in tools), `task_id`, `step` (name from YAML), `round` (1, 2, … when a step reopens), `status` (`open` / `claimed` / `completed` / `released` / `superseded`), `claimed_by`, `lease_expires_at`, `outcome`, `evidence` (JSON), `opened_at`, `closed_at` |
+| `step_runs` | `id` (int, the `step_id` used in tools), `task_id`, `step` (name from YAML), `round` (1, 2, … when a step reopens), `status` (`open` / `claimed` / `completed` / `released` / `superseded`), `claimed_by`, `claim_token`, `lease_expires_at`, `outcome`, `evidence` (JSON), `opened_at`, `closed_at` |
 | `artifacts` | `task_id`, `step_run_id`, `name` (for example `design_doc`), `path` (repo-relative), `commit` (full 40-char SHA), `branch` |
 | `events` | `id`, `at`, `caller`, `operation`, `task_id`, `step_run_id`, `detail` (JSON), `result` (`ok` / `rejected` + reason) |
 
@@ -158,11 +159,11 @@ All tools return structured content (pydantic models → `structuredContent`). E
 | `list_tasks(status?)` | tasks with their current step and waiting-for line | — |
 | `get_task(task_id)` | task, current step run, artifacts, full event history, **waiting-for** (§6.5) | unknown task |
 | `list_open_steps()` | open `agent` step runs (id, task, step, skill, summary). Human gates are not listed here | — |
-| `claim_step(step_id)` | marks it claimed by the caller with a lease (default 30 min **[builder call]**) | not open (already claimed with an unexpired lease, completed, superseded) |
+| `claim_step(step_id)` | marks it claimed by the caller with a lease (default 30 min **[builder call]**); returns `step_id`, `claim_token`, `lease_expires_at` | not open (already claimed with an unexpired lease, completed, superseded) |
 | `get_step_context(step_id)` | task title and request; step name, skill, instructions, required output; artifacts of earlier steps; the latest rejection reason if this is a reopened round | unknown step |
-| `heartbeat(step_id)` | extends the lease | not claimed by caller |
-| `complete_step(step_id, outcome, artifacts)` | `artifacts` is a list of `{name, path, commit, branch}`; validates they cover every required name; records them; closes the run; opens the next step (or finishes the task) | not claimed by caller; missing artifact; path not relative or contains `..`; `commit` not a 40-char hex SHA |
-| `release_step(step_id, reason, force?)` | returns it to `open` | not claimed by caller (unless `force`) |
+| `heartbeat(step_id, claim_token)` | extends the lease | wrong or stale claim token |
+| `complete_step(step_id, claim_token, outcome, artifacts)` | `artifacts` is a list of `{name, path, commit, branch}`; validates they cover every required name; records them; closes the run; opens the next step (or finishes the task) | wrong or stale claim token; missing artifact; path not relative or contains `..`; `commit` not a 40-char hex SHA |
+| `release_step(step_id, reason, claim_token?, force?)` | returns it to `open` | wrong or stale claim token (unless `force`) |
 | `decide_gate(task_id, gate, decision, reason?)` | `approve` → opens `on_approve`; `reject` (reason required) → reopens `on_reject` as a new round | task isn't at that gate |
 
 `outcome` is `completed` for agent steps in M1 (the field exists so M2's plan review can return `issues`).
@@ -218,7 +219,7 @@ M1 is done when this works on this repo, with the core running in one terminal:
 2. Claude Code session A (bridge skill installed, core MCP registered): "work on taktloop" → claims *design* of task 1, runs brainstorming, writes `docs/superpowers/specs/…-design.md`, completes the step, and **stops** without invoking writing-plans.
 3. Session A is closed. `taktloop task show 1` → waiting for approver at *design_approval*, history lists every event.
 4. `taktloop reject 1 --reason "…"` → design reopens as round 2; a session sees the reason in the context and revises. Then `taktloop approve 1`.
-5. Restart the core in between (state survives). A second session trying to complete or release a step held by another session is rejected.
+5. Restart the core in between (state survives). A second session trying to complete or release a step held by another session (without its claim token) is rejected.
 6. New session B: "work on taktloop" → claims *plan*, gets the design doc ref from context, writes the plan, completes, stops. `task show 1` → done, with design doc and plan artifacts.
 
 Plus automated tests (pytest, run with `uv run pytest`): workflow validation, every tool's happy path and rejections, lazy lease expiry, reject/reopen rounds, restart persistence, and an MCP round trip through the SDK's in-memory client.
