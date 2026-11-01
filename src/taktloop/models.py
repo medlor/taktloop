@@ -69,3 +69,11 @@ class TaskDetail(TaskSummary):
     request: str
     artifacts: list[Artifact]
     history: list[Event]
+
+
+class TaskList(BaseModel):
+    tasks: list[TaskSummary]
+
+
+class OpenStepList(BaseModel):
+    steps: list[OpenStep]
