@@ -2,14 +2,16 @@
 
 import argparse
 import json
+import re
 import shutil
+import socket
 import sys
 from datetime import UTC, datetime
 from importlib.metadata import version
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import anyio
-import httpx2
 import yaml
 from mcp import Client, Implementation
 
@@ -26,26 +28,41 @@ class CoreUnreachable(Exception):
     """No core is listening at the URL."""
 
 
-_NET_ERRORS = (httpx2.TransportError, OSError)
-
-
-def _only_net_errors(e: BaseException) -> bool:
+def _only_os_errors(e: BaseException) -> bool:
     if isinstance(e, BaseExceptionGroup):
-        return all(_only_net_errors(s) for s in e.exceptions)
-    return isinstance(e, _NET_ERRORS)
+        return all(_only_os_errors(s) for s in e.exceptions)
+    return isinstance(e, OSError)
+
+
+def _probe(url: str) -> None:
+    """Cheap stdlib reachability check, so a down core is reported without transport internals."""
+    parts = urlsplit(url)
+    port = parts.port or (443 if parts.scheme == "https" else 80)
+    try:
+        socket.create_connection((parts.hostname, port), timeout=2).close()
+    except OSError:
+        raise CoreUnreachable(url) from None
+
+
+_TOOL_PREFIX = re.compile(r"^Error executing tool \S+: ")
+
+
+def _reason(text: str) -> str:
+    return _TOOL_PREFIX.sub("", text, count=1)
 
 
 async def _call_tool(url: str, name: str, args: dict) -> dict:
+    _probe(url)
     info = Implementation(name="taktloop-cli", version=version("taktloop"))
     try:
         async with Client(url, client_info=info) as client:
             result = await client.call_tool(name, args)
     except BaseException as e:
-        if _only_net_errors(e):
+        if _only_os_errors(e):
             raise CoreUnreachable(url) from None
         raise
     if result.is_error:
-        raise ToolRejected(result.content[0].text if result.content else "unknown error")
+        raise ToolRejected(_reason(result.content[0].text) if result.content else "unknown error")
     return result.structured_content
 
 

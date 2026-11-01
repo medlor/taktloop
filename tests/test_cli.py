@@ -62,3 +62,8 @@ def test_missing_config_is_one_line(tmp_path, capsys):
     assert cli.main(["--config", str(tmp_path / "nope.yaml"), "steps"]) == 2
     err = capsys.readouterr().err
     assert err.startswith("taktloop: ") and err.count("\n") == 1
+
+
+def test_reason_strips_sdk_prefix_only_when_present():
+    assert cli._reason("Error executing tool decide_gate: task 1 is not at a gate") == "task 1 is not at a gate"
+    assert cli._reason("task 1 is not at a gate") == "task 1 is not at a gate"
