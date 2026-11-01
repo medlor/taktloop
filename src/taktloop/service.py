@@ -6,12 +6,14 @@ import secrets
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Literal
 
 from taktloop.models import (
-    ArtifactIn, Claim, OpenStep, StepContext, TaskSummary,
+    Artifact, ArtifactIn, Claim, Event, OpenStep, StepContext, TaskDetail, TaskSummary,
 )
-from taktloop.rules import Rejected, check_artifacts, same_token, waiting_for
+from taktloop.rules import (
+    Rejected, check_artifacts, clean_reason, latest_rounds, same_token, waiting_for,
+)
 from taktloop.store import ArtifactRow, StepRunRow, Store, TaskRow, Tx
 from taktloop.workflow import DONE, Workflow
 
@@ -107,6 +109,14 @@ class Service:
         last = tx.last_step_run(task_id, step)
         return tx.insert_step_run(task_id, step, (last.round if last else 0) + 1, self._clock())
 
+    def _artifacts(self, tx: Tx, task_id: int) -> list[Artifact]:
+        out = []
+        for a in tx.list_artifacts(task_id):
+            run = tx.get_step_run(a.step_run_id)
+            out.append(Artifact(name=a.name, path=a.path, commit=a.commit, branch=a.branch,
+                                step=run.step, round=run.round))
+        return out
+
     def _claim(self, tx: Tx, run: StepRunRow) -> Claim:
         expires = self._clock() + self._lease
         tx.update_step_run(run.id, lease_expires_at=expires)
@@ -155,11 +165,17 @@ class Service:
         def body(tx: Tx, ids: _Ids) -> StepContext:
             run = self._load(tx, ids, step_id)
             task, step = tx.get_task(run.task_id), self._wf.step(run.step)
+            reason = None
+            if run.round > 1:
+                rejects = [e for e in tx.list_events(task.id) if e.operation == "decide_gate"
+                           and e.result == "ok" and e.detail.get("decision") == "reject"]
+                reason = rejects[-1].detail["reason"] if rejects else None
             return StepContext(
                 step_id=run.id, task_id=task.id, task_title=task.title, request=task.request,
                 step=run.step, skill=step.skill or "", instructions=step.instructions,
                 required_artifacts=list(step.required_artifacts), round=run.round,
-                rejection_reason=None, artifacts=[])
+                rejection_reason=reason,
+                artifacts=latest_rounds(self._artifacts(tx, task.id), exclude_step=run.step))
         return self._run(caller, "get_step_context", {"step_id": step_id}, body, writes=False)
 
     def heartbeat(self, caller: Caller, step_id: int, claim_token: str) -> Claim:
@@ -204,3 +220,67 @@ class Service:
             return self._summary(tx, tx.get_task(run.task_id))
         detail = {"step_id": step_id, "reason": reason, "force": force}
         return self._run(caller, "release_step", detail, body)
+
+    def decide_gate(self, caller: Caller, task_id: int, gate: str | None,
+                    decision: Literal["approve", "reject"],
+                    reason: str | None = None) -> TaskSummary:
+        names: dict = {"task_id": task_id, "gate": gate, "decision": decision,
+                       "reason": reason, "artifacts": []}
+
+        def body(tx: Tx, ids: _Ids) -> TaskSummary:
+            task = tx.get_task(task_id)
+            if task is None:
+                raise Rejected(f"unknown task {task_id}")
+            ids.task_id = task_id
+            run = tx.current_step_run(task_id)
+            run = self._expire(tx, run) if run else None
+            if run is None or self._wf.step(run.step).kind != "human_gate" or run.status != "open":
+                raise Rejected(f"task {task_id} is not at a gate")
+            ids.step_run_id = run.id
+            names["gate"] = run.step
+            if gate is not None and gate != run.step:
+                raise Rejected(f"task {task_id} is at gate {run.step}, not {gate}")
+            step = self._wf.step(run.step)
+            if decision == "approve":
+                target, outcome = step.on_approve, "approved"
+            elif decision == "reject":
+                names["reason"] = clean_reason(reason)
+                target, outcome = step.on_reject, "rejected"
+            else:
+                raise Rejected(f"decision must be 'approve' or 'reject', got {decision!r}")
+            names["artifacts"] = [a.model_dump() for a in
+                                  latest_rounds(self._artifacts(tx, task_id))]
+            tx.update_step_run(run.id, status="completed", outcome=outcome,
+                               closed_at=self._clock())
+            if target == DONE:
+                tx.set_task_status(task_id, "done")
+            else:
+                self._open_step(tx, task_id, target)
+            return self._summary(tx, tx.get_task(task_id))
+        return self._run(caller, "decide_gate", names, body)
+
+    def get_task(self, caller: Caller, task_id: int) -> TaskDetail:
+        def body(tx: Tx, ids: _Ids) -> TaskDetail:
+            task = tx.get_task(task_id)
+            if task is None:
+                raise Rejected(f"unknown task {task_id}")
+            ids.task_id = task_id
+            summary = self._summary(tx, task)
+            steps: dict[int | None, str | None] = {None: None}
+            history = []
+            for e in tx.list_events(task_id):
+                if e.step_run_id not in steps:
+                    steps[e.step_run_id] = tx.get_step_run(e.step_run_id).step
+                history.append(Event(at=e.at, caller=e.caller, operation=e.operation,
+                                     step=steps[e.step_run_id], result=e.result,
+                                     reason=e.reason, detail=e.detail))
+            return TaskDetail(**summary.model_dump(), request=task.request,
+                              artifacts=self._artifacts(tx, task_id), history=history)
+        return self._run(caller, "get_task", {"task_id": task_id}, body, writes=False)
+
+    def list_tasks(self, caller: Caller, include_closed: bool = False) -> list[TaskSummary]:
+        def body(tx: Tx, ids: _Ids) -> list[TaskSummary]:
+            statuses = ["active", "done", "cancelled"] if include_closed else ["active"]
+            return [self._summary(tx, t) for t in tx.list_tasks(statuses)]
+        return self._run(caller, "list_tasks", {"include_closed": include_closed}, body,
+                         writes=False)

@@ -8,7 +8,7 @@ from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import PurePosixPath
 
-from taktloop.models import ArtifactIn
+from taktloop.models import Artifact, ArtifactIn
 from taktloop.workflow import Step
 
 _SHA = re.compile(r"[0-9a-f]{40}")
@@ -52,3 +52,19 @@ def waiting_for(step: Step | None, status: str = "open", claimed_by: str | None 
     if step.kind == "human_gate":
         return f"waiting for {step.role} decision at {step.name}"
     return f"waiting for a {step.role} to pick up {step.name}"
+
+
+def latest_rounds(artifacts: Iterable[Artifact], exclude_step: str | None = None) -> list[Artifact]:
+    """Artifacts of each step's latest round that has any (artifacts exist only once completed)."""
+    arts = [a for a in artifacts if a.step != exclude_step]
+    newest: dict[str, int] = {}
+    for a in arts:
+        newest[a.step] = max(newest.get(a.step, 0), a.round)
+    return [a for a in arts if a.round == newest[a.step]]
+
+
+def clean_reason(reason: str | None) -> str:
+    """The stripped reason, or Rejected when absent or blank."""
+    if not reason or not reason.strip():
+        raise Rejected("reason is required")
+    return reason.strip()

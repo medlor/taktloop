@@ -53,3 +53,19 @@ class StepContext(BaseModel):
     round: int
     rejection_reason: str | None
     artifacts: list[Artifact]
+
+
+class Event(BaseModel):
+    at: datetime
+    caller: str
+    operation: str
+    step: str | None
+    result: str
+    reason: str | None
+    detail: dict
+
+
+class TaskDetail(TaskSummary):
+    request: str
+    artifacts: list[Artifact]
+    history: list[Event]
