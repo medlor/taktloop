@@ -67,3 +67,18 @@ def test_missing_config_is_one_line(tmp_path, capsys):
 def test_reason_strips_sdk_prefix_only_when_present():
     assert cli._reason("Error executing tool decide_gate: task 1 is not at a gate") == "task 1 is not at a gate"
     assert cli._reason("task 1 is not at a gate") == "task 1 is not at a gate"
+
+
+@pytest.mark.parametrize("url", ["http://127.0.0.1:99999/mcp", "http://127.0.0.1:abc/mcp", "ftp://h/mcp", "http:///mcp"])
+def test_invalid_url_is_one_line(url, capsys):
+    assert cli.main(["--url", url, "steps"]) == 2
+    assert capsys.readouterr().err == f"taktloop: invalid URL {url}\n"
+
+
+def test_unexpected_error_is_one_line(monkeypatch, capsys):
+    async def boom(url, name, args):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(cli, "_call_tool", boom)
+    assert cli.main(["--url", "http://x/mcp", "steps"]) == 2
+    assert capsys.readouterr().err == "taktloop: RuntimeError: boom\n"

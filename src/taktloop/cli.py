@@ -34,6 +34,15 @@ def _only_os_errors(e: BaseException) -> bool:
     return isinstance(e, OSError)
 
 
+def _valid_url(url: str) -> bool:
+    try:
+        parts = urlsplit(url)
+        parts.port  # noqa: B018 - raises ValueError when malformed
+    except ValueError:
+        return False
+    return parts.scheme in ("http", "https") and bool(parts.hostname)
+
+
 def _probe(url: str) -> None:
     """Cheap stdlib reachability check, so a down core is reported without transport internals."""
     parts = urlsplit(url)
@@ -204,6 +213,9 @@ def main(argv: list[str] | None = None) -> int:
     if ns.cmd == "serve":
         return _serve(cfg)
     url = ns.url or cfg.url
+    if not _valid_url(url):
+        print(f"taktloop: invalid URL {url}", file=sys.stderr)
+        return 2
     tool, args, render = _request(ns)
     try:
         result = anyio.run(_call_tool, url, tool, args)
@@ -212,6 +224,12 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     except CoreUnreachable:
         print(f"taktloop core not reachable at {url} — start it with `uv run taktloop serve`", file=sys.stderr)
+        return 2
+    except Exception as e:
+        while isinstance(e, BaseExceptionGroup):
+            e = e.exceptions[0]
+        msg = " ".join(f"{type(e).__name__}: {e}".split())
+        print(f"taktloop: {msg}", file=sys.stderr)
         return 2
     print(json.dumps(result, indent=2) if ns.json else render(result))
     return 0
