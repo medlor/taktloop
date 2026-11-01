@@ -1,4 +1,4 @@
 .agents/
 .claude/
 .env
-docs/idea/
+docs/idea/*.jpg
