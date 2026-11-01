@@ -57,7 +57,7 @@ Roles are a default set. A factory may rename, merge or add roles, for example o
 1. **Every operation is checked.** Every call to the core MCP server, whether it reads state, submits an event, approves a gate or changes configuration, is authorized against the caller's role. This applies to the dashboard, CLI, API, A2A and MCP alike.
 2. **Least privilege.** A role gets only the operations its responsibility needs.
 3. **Separation of duties per task.** One identity can't hold conflicting roles on the same task. By default: builder ≠ reviewer, builder ≠ approver, and requester ≠ approver for release gates. The core enforces this from its own records, for example "this identity submitted the implementation for task 42, so it may not approve task 42".
-4. **The orchestrator dispatches, it doesn't work.** It can't submit results of agent or human steps, and it can't approve. **[proposal]** A code step it runs (PRD §7) is recorded under the step's own role (for example releaser) with executor `code`, so separation of duties still applies to it.
+4. **The orchestrator dispatches, it doesn't work.** It can't submit results of agent or human steps, and it can't approve. **Decided:** a code step it runs (PRD §7) is recorded under the step's own role (for example releaser) with executor `code`, so separation of duties still applies to it.
 5. **Gates are role-bound.** A human gate names the role that may pass it (for example `approver`). A verified gate is checked by plain code (ADR 0002).
 6. **Everything is audited.** Every operation is logged with the caller's identity, role, task and outcome. Denied calls are logged too.
 

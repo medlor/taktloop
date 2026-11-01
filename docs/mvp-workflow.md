@@ -4,7 +4,7 @@ Status: draft · Nov 1, 2026 · @Tobias
 
 > Text marked **[proposal]** is a suggestion that hasn't been agreed yet. **[open]** marks a question still to answer.
 
-The MVP factory is **taktloop building itself** (see `prd.md`). @Tobias already works with the [superpowers](https://github.com/obra/superpowers) skills (vendored in `.agents/skills/`, commit `2ce8aa1`). This document aligns the MVP's default workflow with those skills, so that each step's role runs the skills it already uses.
+The MVP factory is **taktloop building itself** (see `prd.md`). @Tobias already works with the [superpowers](https://github.com/obra/superpowers) skills (vendored locally from upstream commit `2ce8aa1`). This document aligns the MVP's default workflow with those skills, so that each step's role runs the skills it already uses.
 
 ## 1. The superpowers basic workflow
 
