@@ -1,0 +1,208 @@
+<!doctype html><html><head><meta charset="utf-8"><title>taktloop — system overview (MVP factory)</title><style>
+:root{--background:#fff;--foreground:#1f2328;--muted-foreground:#656d76;--card:#fff;--border:#d0d7de;
+--chart-1:#2f6fd6;--chart-2:#1f9d63;--chart-3:#d0802b;--chart-4:#8a4fd6;
+--font-sans:system-ui,-apple-system,Segoe UI,sans-serif;--font-mono:ui-monospace,Menlo,monospace}
+body{max-width:900px;margin:24px auto;padding:0 16px;font-family:var(--font-sans);color:var(--foreground);background:var(--background)}
+
+svg{width:100%;height:auto;display:block}
+text{fill:var(--foreground);font-size:11px}
+.t{font-weight:600;font-size:12px}
+.z{font-weight:700;font-size:12px;letter-spacing:.04em;text-transform:uppercase}
+.m{fill:var(--muted-foreground)}
+.zone{fill:none;stroke:var(--border);stroke-width:1.5;stroke-dasharray:5 4}
+.ex{fill:color-mix(in srgb,var(--chart-1) 14%,transparent);stroke:var(--chart-1);stroke-width:1.3}
+.tk{fill:color-mix(in srgb,var(--chart-2) 14%,transparent);stroke:var(--chart-2);stroke-width:1.3}
+.sub{fill:var(--card);stroke:color-mix(in srgb,var(--chart-2) 60%,transparent)}
+.gh{fill:color-mix(in srgb,var(--chart-3) 14%,transparent);stroke:var(--chart-3);stroke-width:1.3}
+.later{fill:none;stroke:var(--muted-foreground);stroke-dasharray:4 3}
+.a{fill:none;stroke-width:1.6}
+.a1{stroke:var(--chart-1)} .a2{stroke:var(--chart-2)} .a3{stroke:var(--chart-3)} .a4{stroke:var(--chart-4)}
+.n{font-weight:700;font-size:11px}
+.legend{font-size:12.5px;line-height:1.5;margin-top:10px}
+.legend b{font-weight:600}
+table{border-collapse:collapse;width:100%;font-size:12.5px;margin-top:14px}
+th,td{border-bottom:1px solid var(--border);text-align:left;padding:5px 6px;vertical-align:top}
+th{color:var(--muted-foreground);font-weight:600}
+h3{font-size:14px;margin:18px 0 4px}
+code{font-family:var(--font-mono);font-size:11.5px}
+</style></head><body>
+<h2>taktloop — system overview of the MVP factory (taktloop builds taktloop)</h2>
+<svg viewBox="0 0 720 912" xmlns="http://www.w3.org/2000/svg">
+<defs>
+ <marker id="h1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" style="fill:var(--chart-1)"/></marker>
+ <marker id="h2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" style="fill:var(--chart-2)"/></marker>
+ <marker id="h3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" style="fill:var(--chart-3)"/></marker>
+ <marker id="h4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" style="fill:var(--chart-4)"/></marker>
+</defs>
+
+<!-- ZONE 1: executors -->
+<text x="8" y="22" class="z" style="fill:var(--chart-1)">Executors = MCP clients · skills run here</text>
+<rect x="10" y="32" width="210" height="118" rx="6" class="ex"/>
+<text x="20" y="50" class="t">Interactive harness</text>
+<text x="20" y="65" class="m">Claude Code, your own session</text>
+<text x="20" y="84">Roles: requester, planner (design)</text>
+<text x="20" y="101">Skills: bridge skill, brainstorming</text>
+<text x="20" y="118">MCP clients → core, tickets</text>
+<text x="20" y="138" class="m">pulls the open design step</text>
+
+<rect x="10" y="160" width="210" height="80" rx="6" class="ex"/>
+<text x="20" y="178" class="t">taktloop CLI (you)</text>
+<text x="20" y="195">Roles: approver, factory owner</text>
+<text x="20" y="211">approve gates · status · config</text>
+<text x="20" y="228" class="m">plain API client, no skills</text>
+
+<rect x="230" y="32" width="480" height="208" rx="6" class="ex"/>
+<text x="240" y="50" class="t">Headless harness runs — Claude Code, one run per step</text>
+<text x="240" y="68">Roles: triage · planner · plan reviewer · builder · reviewer · verifier</text>
+<text x="240" y="88" class="t" style="font-size:11px">Skills run here (inside the LLM's context):</text>
+<text x="240" y="105">• taktloop bridge skill: claim step → do only this step → report → stop</text>
+<text x="240" y="121">• superpowers: writing-plans, using-git-worktrees, test-driven-development,</text>
+<text x="250" y="136">subagent-driven-development, requesting-code-review,</text>
+<text x="250" y="151">verification-before-completion, finishing-a-development-branch</text>
+<text x="240" y="167">• taktloop plan-review prompt   • GitHub plugin skill</text>
+<text x="240" y="189">MCP clients → core · tickets · GitHub remote MCP</text>
+<text x="240" y="205">Local tools: shell, git worktree, test runner</text>
+<text x="240" y="227" class="m">each run uses its own identity (token) for its role</text>
+
+<!-- ZONE 2: taktloop -->
+<rect x="4" y="282" width="712" height="380" rx="8" class="zone"/>
+<text x="14" y="300" class="z" style="fill:var(--chart-2)">taktloop — one process + SQLite file</text>
+
+<rect x="10" y="312" width="430" height="340" rx="6" class="tk"/>
+<text x="22" y="330" class="t">Core MCP server — single source of truth</text>
+<rect x="22" y="340" width="406" height="36" rx="4" class="sub"/>
+<text x="32" y="356" class="t" style="font-size:11px">Endpoint: MCP · API (A2A later)</text>
+<text x="32" y="370" class="m">validates every token, checks the caller's role (RBAC)</text>
+<rect x="22" y="382" width="406" height="36" rx="4" class="sub"/>
+<text x="32" y="398" class="t" style="font-size:11px">Task &amp; workflow state</text>
+<text x="32" y="412" class="m">tasks, open steps, leases, artifact refs, separation of duties</text>
+<rect x="22" y="424" width="406" height="48" rx="4" class="sub"/>
+<text x="32" y="440" class="t" style="font-size:11px">taktloop orchestrator</text>
+<text x="32" y="454" class="m">pushes "push" steps, watches stalls, escalates to factory owner,</text>
+<text x="32" y="467" class="m">runs code steps. Plain rules; AI only where judgment is needed</text>
+<rect x="22" y="478" width="406" height="26" rx="4" class="sub"/>
+<text x="32" y="495" class="t" style="font-size:11px">Audit log <tspan class="m" style="font-weight:400">— every call, allowed or denied</tspan></text>
+<rect x="22" y="510" width="406" height="64" rx="4" class="sub"/>
+<text x="32" y="526" class="t" style="font-size:11px">Factory config (copy of a shipped template)</text>
+<text x="32" y="541" class="m">steps · role per step · dispatch pull/push · skill name per step ·</text>
+<text x="32" y="554" class="m">gate checks · role bindings. Holds skill NAMES only;</text>
+<text x="32" y="567" class="m">skill files are installed in the harnesses</text>
+<rect x="22" y="580" width="406" height="62" rx="4" class="sub"/>
+<text x="32" y="596" class="t" style="font-size:11px">Gate checker (plain code, no LLM)</text>
+<text x="32" y="611" class="m">"CI green": calls GitHub MCP get_workflow_run, checks</text>
+<text x="32" y="624" class="m">conclusion == success and commit == task's commit,</text>
+<text x="32" y="637" class="m">using the core's own read-only GitHub credential</text>
+
+<rect x="490" y="330" width="220" height="92" rx="6" class="tk"/>
+<text x="500" y="348" class="t">Ticket stand-in MCP server</text>
+<text x="500" y="365">local, minimal (MVP only)</text>
+<text x="500" y="381" class="m">later replaced by e.g. Jira's</text>
+<text x="500" y="395" class="m">own MCP server + plugin skill</text>
+<text x="500" y="411" class="m">(ADR 0002)</text>
+
+<rect x="490" y="470" width="220" height="110" rx="6" class="tk" style="stroke-dasharray:5 3"/>
+<text x="500" y="488" class="t">Dev token issuer</text>
+<text x="500" y="504">separate component, dev/MVP only</text>
+<text x="500" y="520" class="m">standard OIDC: /token, JWKS,</text>
+<text x="500" y="534" class="m">discovery. ⑤ executors get tokens;</text>
+<text x="500" y="548" class="m">core only fetches JWKS</text>
+<text x="500" y="568" class="m">(ADR 0003)</text>
+
+<!-- ZONE 3: external -->
+<text x="8" y="694" class="z" style="fill:var(--chart-3)">External — run by third parties</text>
+<rect x="10" y="704" width="470" height="150" rx="6" class="gh"/>
+<text x="22" y="722" class="t">GitHub (operated by GitHub)</text>
+<rect x="22" y="734" width="200" height="108" rx="4" class="sub" style="stroke:var(--chart-3)"/>
+<text x="32" y="752" class="t" style="font-size:11px">GitHub remote MCP server</text>
+<text x="32" y="768" class="m">tools: PRs, workflow runs, …</text>
+<text x="32" y="784" class="m">auth + scopes dictated</text>
+<text x="32" y="798" class="m">by GitHub; documented in</text>
+<text x="32" y="812" class="m">the GitHub plugin skill</text>
+<rect x="262" y="734" width="206" height="108" rx="4" class="sub" style="stroke:var(--chart-3)"/>
+<text x="272" y="752" class="t" style="font-size:11px">Repo medlor/taktloop</text>
+<text x="272" y="768" class="t" style="font-size:11px">+ GitHub Actions (CI)</text>
+<text x="272" y="786" class="m">branches, PRs, CI runs.</text>
+<text x="272" y="800" class="m">Branch protection stays</text>
+<text x="272" y="814" class="m">GitHub's job</text>
+<path d="M222,788 L258,788" class="a a3" marker-end="url(#h3)"/>
+<text x="226" y="782" class="m" style="font-size:9.5px">API</text>
+
+<rect x="490" y="704" width="220" height="66" rx="6" class="later"/>
+<text x="500" y="722" class="t">Later: other tools</text>
+<text x="500" y="738" class="m">their own MCP server + plugin</text>
+<text x="500" y="752" class="m">skill (e.g. Jira), no layer between</text>
+<rect x="490" y="782" width="220" height="72" rx="6" class="later"/>
+<text x="500" y="800" class="t">Production: org identity provider</text>
+<text x="500" y="816" class="m">Entra ID / Okta / Keycloak replaces</text>
+<text x="500" y="830" class="m">the dev issuer — config change only</text>
+
+<!-- ARROWS -->
+<!-- 1: all executors -> core endpoint -->
+<path d="M10,90 L4,90 L4,262 L300,262" class="a a1"/>
+<path d="M110,240 L110,262" class="a a1"/>
+<path d="M300,240 L300,262" class="a a1"/>
+<path d="M200,262 L200,338" class="a a1" marker-end="url(#h1)"/>
+<circle cx="200" cy="300" r="8" style="fill:var(--chart-1)"/><text x="196.5" y="304" class="n" style="fill:var(--background)">1</text>
+<text x="212" y="276" style="fill:var(--chart-1);font-size:10.5px">core MCP calls + bearer token: list_open_steps, claim_step, complete_step …</text>
+
+<!-- 2: orchestrator push -> headless -->
+<path d="M400,424 L400,242" class="a a2" marker-end="url(#h2)" style="stroke-dasharray:6 3"/>
+<circle cx="400" cy="300" r="8" style="fill:var(--chart-2)"/><text x="396.5" y="304" class="n" style="fill:var(--background)">2</text>
+
+<!-- 3: headless -> GitHub (MCP + git push) -->
+<path d="M465,240 L465,690 L440,690 L440,732" class="a a3" marker-end="url(#h3)"/>
+<circle cx="465" cy="450" r="8" style="fill:var(--chart-3)"/><text x="461.5" y="454" class="n" style="fill:var(--background)">3</text>
+
+<!-- 4: executors -> tickets -->
+<path d="M600,240 L600,328" class="a a4" marker-end="url(#h4)"/>
+<circle cx="600" cy="300" r="8" style="fill:var(--chart-4)"/><text x="596.5" y="304" class="n" style="fill:var(--background)">4</text>
+
+<!-- JWKS core -> issuer -->
+<path d="M440,545 L488,545" class="a" style="stroke:var(--muted-foreground);stroke-dasharray:3 3" marker-end="url(#h4)"/>
+<text x="446" y="539" class="m" style="font-size:9.5px">JWKS</text>
+<path d="M440,398 L488,398" class="a a2" marker-end="url(#h2)"/>
+<circle cx="452" cy="398" r="8" style="fill:var(--chart-2)"/><text x="448.5" y="402" class="n" style="fill:var(--background)">7</text>
+
+<!-- 6: gate checker -> GitHub MCP -->
+<path d="M122,642 L122,732" class="a a2" marker-end="url(#h2)"/>
+<circle cx="122" cy="688" r="8" style="fill:var(--chart-2)"/><text x="118.5" y="692" class="n" style="fill:var(--background)">6</text>
+
+<text x="8" y="880" class="m" style="font-size:10.5px">Solid boxes: MVP. Dashed boxes: dev-only or later. Numbers refer to the list below.</text>
+</svg>
+
+<div class="legend">
+<b>①</b> Every executor talks to the core only through MCP/API, always with a token. With the bridge skill it pulls work: <code>list_open_steps</code> → <code>claim_step</code> → <code>get_step_context</code> (names the skill to use) → work → <code>complete_step</code> with evidence.<br>
+<b>②</b> For steps marked <code>push</code>, the taktloop orchestrator starts a headless harness run itself (nobody has to be polling).<br>
+<b>③</b> The headless builder pushes branches with git and uses GitHub's remote MCP server (PRs, runs), with <i>its own</i> role-scoped GitHub credential. taktloop is not in between.<br>
+<b>④</b> Harnesses read/write tickets through the local stand-in MCP server.<br>
+<b>⑤</b> Executors get their core tokens from the dev issuer; the core only fetches its public keys (JWKS) to validate them.<br>
+<b>⑥</b> The gate checker in the core is itself an MCP <i>client</i>: it calls GitHub's MCP server with plain code to verify "CI green", never trusting the agent's word.<br>
+<b>⑦</b> The core is also an MCP client of the ticket stand-in: it reads ticket status with its own credential to detect out-of-sync tickets (escalated to the factory owner) and for gate checks that depend on a ticket.
+</div>
+
+<h3>Who is MCP server, who is MCP client</h3>
+<table>
+<tr><th>Component</th><th>MCP server?</th><th>MCP client?</th><th>Runs skills?</th></tr>
+<tr><td>Core MCP server (taktloop)</td><td>yes: task/step tools</td><td>yes: gate checker, code steps, ticket status checks</td><td>no, only stores skill names</td></tr>
+<tr><td>Ticket stand-in (taktloop, MVP)</td><td>yes (for harnesses and the core)</td><td>no</td><td>no</td></tr>
+<tr><td>Dev token issuer (taktloop, dev)</td><td>no, OIDC endpoints</td><td>no</td><td>no</td></tr>
+<tr><td>Harness: interactive / headless</td><td>no</td><td>yes: core, tickets, GitHub</td><td><b>yes, all skills run here</b></td></tr>
+<tr><td>taktloop CLI</td><td>no</td><td>API client of the core</td><td>no</td></tr>
+<tr><td>GitHub remote MCP server</td><td>yes (third party)</td><td>no</td><td>no</td></tr>
+</table>
+
+<h3>Terms</h3>
+<table>
+<tr><td><b>Factory</b></td><td>this setup: one core + config + bindings, here "taktloop builds taktloop"</td></tr>
+<tr><td><b>Task / step</b></td><td>a task is one capability request; it moves through steps (design, plan, build, …), each owned by one role</td></tr>
+<tr><td><b>Role</b></td><td>permission + responsibility for a step (builder, reviewer, approver …), read from the token</td></tr>
+<tr><td><b>Executor</b></td><td>whoever does a step: a harness run, a human, or a script</td></tr>
+<tr><td><b>Binding</b></td><td>config line "role X is done by executor Y"</td></tr>
+<tr><td><b>Harness</b></td><td>an existing agent runtime (Claude Code). taktloop has no agent loop of its own</td></tr>
+<tr><td><b>Skill</b></td><td>instructions loaded into a harness. Superpowers = the work skills; bridge skill = how to talk to the core</td></tr>
+<tr><td><b>Plugin</b></td><td>an external tool's MCP server + the skill that explains it (incl. its auth). Ships with templates</td></tr>
+<tr><td><b>Agent step / code step</b></td><td>agent step: an LLM in a harness does it. Code step: the orchestrator makes one declared MCP call itself</td></tr>
+<tr><td><b>Gate</b></td><td>condition to leave a step: human approval in the core, agent verdict, or a hard gate checked by plain code</td></tr>
+<tr><td><b>taktloop orchestrator</b></td><td>part of the core: transitions, pushes, stall watch, escalation; AI only when judgment is needed</td></tr>
+</table>
+</body></html>
