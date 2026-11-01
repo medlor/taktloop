@@ -87,7 +87,7 @@ class Service:
     def _load_owned(self, tx: Tx, ids: _Ids, step_id: int, claim_token: str) -> StepRunRow:
         run = self._load(tx, ids, step_id)
         if run.status != "claimed":
-            raise Rejected("step is not claimed")
+            raise Rejected("step is not claimed (lease expired or released); claim it again")
         if not same_token(run.claim_token, claim_token):
             raise Rejected("claim token does not match")
         return run
@@ -175,7 +175,7 @@ class Service:
                 step=run.step, skill=step.skill or "", instructions=step.instructions,
                 required_artifacts=list(step.required_artifacts), round=run.round,
                 rejection_reason=reason,
-                artifacts=latest_rounds(self._artifacts(tx, task.id), exclude_step=run.step))
+                artifacts=latest_rounds(self._artifacts(tx, task.id), exclude_step=run.step if run.round == 1 else None))
         return self._run(caller, "get_step_context", {"step_id": step_id}, body, writes=False)
 
     def heartbeat(self, caller: Caller, step_id: int, claim_token: str) -> Claim:

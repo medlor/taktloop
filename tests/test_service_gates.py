@@ -39,7 +39,8 @@ def test_reject_reopens_design_round_2_with_reason(svc):
     assert o.step == "design" and o.round == 2
     ctx = svc.get_step_context(ME, o.step_id)
     assert ctx.rejection_reason == "needs CLI flags"
-    assert ctx.artifacts == []
+    [a] = ctx.artifacts
+    assert (a.name, a.commit, a.step, a.round) == ("design_doc", SHA, "design", 1)
 
 
 def test_reject_requires_reason(svc):

@@ -82,3 +82,40 @@ def test_unexpected_error_is_one_line(monkeypatch, capsys):
     monkeypatch.setattr(cli, "_call_tool", boom)
     assert cli.main(["--url", "http://x/mcp", "steps"]) == 2
     assert capsys.readouterr().err == "taktloop: RuntimeError: boom\n"
+
+
+def test_render_task_detail_shows_decisions_and_artifact_rounds():
+    d = dict(DETAIL)
+    d["artifacts"] = [dict(DETAIL["artifacts"][0], round=2)]
+    d["history"] = [
+        {"at": "2026-11-01T09:06:00Z", "caller": "me", "operation": "decide_gate",
+         "step": "design_approval", "result": "ok", "reason": None,
+         "detail": {"decision": "reject", "reason": "needs flags", "artifacts": []}},
+        {"at": "2026-11-01T09:07:00Z", "caller": "me", "operation": "release_step",
+         "step": "design", "result": "ok", "reason": None,
+         "detail": {"reason": "stuck", "force": True}},
+        {"at": "2026-11-01T09:08:00Z", "caller": "me", "operation": "complete_step",
+         "step": "design", "result": "ok", "reason": None,
+         "detail": {"artifacts": [{"name": "design_doc"}]}},
+    ]
+    out = cli.render_task_detail(d)
+    assert "reject: needs flags" in out
+    assert "stuck (force)" in out
+    assert "design_doc" in out.splitlines()[-1]
+    assert "design r2" in out
+
+
+def test_options_accepted_after_subcommand(monkeypatch, capsys):
+    seen = {}
+
+    async def fake(url, name, args):
+        seen["url"] = url
+        return {**DETAIL, "history": []}
+
+    monkeypatch.setattr(cli, "_call_tool", fake)
+    assert cli.main(["task", "show", "1", "--json", "--url", "http://x/mcp"]) == 0
+    assert seen["url"] == "http://x/mcp" and '"id": 1' in capsys.readouterr().out
+    p = cli._parser()
+    assert str(p.parse_args(["serve", "--config", "f.yaml"]).config) == "f.yaml"
+    ns = p.parse_args(["--url", "http://a/mcp", "steps"])
+    assert ns.url == "http://a/mcp" and ns.json is False

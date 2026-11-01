@@ -91,6 +91,18 @@ def render_summary(d: dict) -> str:
     return f"#{d['id']} {d['title']} [{d['status']}] — {d['waiting_for']}"
 
 
+def _event_detail(e: dict) -> str:
+    """Short extra column: what a gate decision, release or completion carried."""
+    d = e["detail"]
+    if e["operation"] == "decide_gate":
+        return ": ".join(x for x in (d.get("decision"), d.get("reason")) if x)
+    if e["operation"] == "release_step":
+        return f"{d.get('reason', '')}{' (force)' if d.get('force') else ''}"
+    if e["operation"] == "complete_step":
+        return ", ".join(a["name"] for a in d.get("artifacts", []))
+    return ""
+
+
 def render_task_detail(d: dict) -> str:
     lines = [
         f"#{d['id']} {d['title']} [{d['status']}]",
@@ -99,11 +111,12 @@ def render_task_detail(d: dict) -> str:
         "",
         "artifacts:",
     ]
-    arts = [(a["name"], f"{a['path']}@{a['commit'][:12]}", a["branch"]) for a in d["artifacts"]]
+    arts = [(a["name"], f"{a['path']}@{a['commit'][:12]}", a["branch"], f"{a['step']} r{a['round']}")
+            for a in d["artifacts"]]
     lines += ["  " + ln for ln in _table(arts)] if arts else ["  none"]
     lines += ["", "history:"]
     hist = [
-        (_when(e["at"]), e["caller"], e["operation"], e["step"] or "-", e["result"] + (f": {e['reason']}" if e["reason"] else ""))
+        (_when(e["at"]), e["caller"], e["operation"], e["step"] or "-", e["result"] + (f": {e['reason']}" if e["reason"] else ""), _event_detail(e))
         for e in d["history"]
     ]  # fmt: skip
     lines += ["  " + ln for ln in _table(hist)] if hist else ["  none"]
@@ -132,31 +145,40 @@ def render_steps(d: dict) -> str:
 
 
 def _parser() -> argparse.ArgumentParser:
+    def common(parser: argparse.ArgumentParser, **defaults) -> None:
+        parser.add_argument("--config", type=Path, **defaults.get("config", {}))
+        parser.add_argument("--url", help="core URL (overrides the config; no config is read)",
+                            **defaults.get("url", {}))
+        parser.add_argument("--json", action="store_true", help="print structured results as JSON",
+                            **defaults.get("json", {}))
+
     p = argparse.ArgumentParser(prog="taktloop")
-    p.add_argument("--config", type=Path, default=Path("factory.yaml"))
-    p.add_argument("--url", help="core URL (overrides the config; no config is read)")
-    p.add_argument("--json", action="store_true", help="print structured results as JSON")
+    common(p, config={"default": Path("factory.yaml")})
+    # subparser copies must not overwrite a value given before the subcommand
+    hide = {"default": argparse.SUPPRESS}
+    shared = argparse.ArgumentParser(add_help=False)
+    common(shared, config=hide, url=hide, json=hide)
     sub = p.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("serve", help="run the core")
-    task = sub.add_parser("task", help="create, list and show tasks").add_subparsers(dest="sub", required=True)
-    c = task.add_parser("create")
+    sub.add_parser("serve", parents=[shared], help="run the core")
+    task = sub.add_parser("task", parents=[shared], help="create, list and show tasks").add_subparsers(dest="sub", required=True)
+    c = task.add_parser("create", parents=[shared])
     c.add_argument("title")
     c.add_argument("--request", default="", help="request text, or - to read stdin")
-    task.add_parser("list").add_argument("--all", action="store_true", help="include closed tasks")
-    task.add_parser("show").add_argument("id", type=int)
-    a = sub.add_parser("approve")
+    task.add_parser("list", parents=[shared]).add_argument("--all", action="store_true", help="include closed tasks")
+    task.add_parser("show", parents=[shared]).add_argument("id", type=int)
+    a = sub.add_parser("approve", parents=[shared])
     a.add_argument("task", type=int)
     a.add_argument("--gate")
-    r = sub.add_parser("reject")
+    r = sub.add_parser("reject", parents=[shared])
     r.add_argument("task", type=int)
     r.add_argument("--reason", required=True)
     r.add_argument("--gate")
-    rel = sub.add_parser("release", help="force-release a claimed step")
+    rel = sub.add_parser("release", parents=[shared], help="force-release a claimed step")
     rel.add_argument("step_id", type=int)
     rel.add_argument("--force", action="store_true", required=True)
     rel.add_argument("--reason", required=True)
-    sub.add_parser("steps", help="list open steps")
-    s = sub.add_parser("install-skill", help="copy the bridge skill into a project")
+    sub.add_parser("steps", parents=[shared], help="list open steps")
+    s = sub.add_parser("install-skill", parents=[shared], help="copy the bridge skill into a project")
     s.add_argument("--dest", type=Path, default=Path(".claude/skills/taktloop"))
     return p
 

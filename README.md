@@ -18,6 +18,8 @@ uv run taktloop install-skill            # copy the bridge skill to .claude/skil
 uv run taktloop task create "Add a --version flag to the CLI"        # task 1, waiting for a planner
 ```
 
+After `claude mcp add`, restart Claude Code (start a new session) so the tools appear.
+
 In Claude Code (session A), say **work on taktloop**. It claims the design
 step, writes and commits the design doc, completes the step and stops. Close
 the session, then:

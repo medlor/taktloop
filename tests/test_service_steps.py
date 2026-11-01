@@ -206,11 +206,12 @@ def test_lease_expires_lazily(svc, store, clock):
     clock.now += timedelta(minutes=31)
     assert [o.step_id for o in svc.list_open_steps(ME)] == [t.step_id]
     svc.list_open_steps(ME)
-    with pytest.raises(Rejected):
+    with pytest.raises(Rejected, match="lease expired"):
         svc.complete_step(ME, t.step_id, c.claim_token, "completed", [art()])
     assert [e.operation for e in events(store)].count("lease_expired") == 1
     c2 = svc.claim_step(ME, t.step_id)
     assert c2.claim_token != c.claim_token
+    svc.complete_step(ME, t.step_id, c2.claim_token, "completed", [art()])
 
 
 def test_release_returns_step_and_force_needs_no_token(svc):

@@ -14,7 +14,9 @@ tell the user to register them and stop:
 
     claude mcp add --transport http taktloop http://127.0.0.1:8765/mcp
 
-(the core must be running: `uv run taktloop serve`). Do nothing else.
+(the core must be running: `uv run taktloop serve`). Registering takes effect
+only in a new session, so tell the user to restart Claude Code after running
+it. Do nothing else.
 
 ## Procedure
 
@@ -42,10 +44,11 @@ tell the user to register them and stop:
    Order: run skill -> in-chat review until the user is happy -> commit the
    final version -> `complete_step` with that commit -> stop.
 
-   **Step boundary beats skill chaining.** Once the artifact is final, do **not** invoke the skill the running skill
-   says comes next (for example a brainstorming skill that says to invoke
-   writing-plans, or a planning skill that asks for an execution mode). Those
-   belong to later steps, claimed by later sessions.
+   **Step boundary beats skill chaining.** Once the artifact is final, do
+   **not** invoke the skill the running skill says comes next (for example a
+   brainstorming skill that says to invoke writing-plans, or a planning skill
+   that asks for an execution mode). Those belong to later steps, claimed by
+   later sessions.
 6. **Commit the final version, then complete.**
    - Commit each final artifact on the current branch (after the review).
    - Call `complete_step(step_id, claim_token, artifacts=[...])` with one entry
@@ -53,7 +56,9 @@ tell the user to register them and stop:
      (repo-relative), `commit` (the full 40-character SHA from
      `git rev-parse HEAD`) and `branch` (from `git branch --show-current`).
    - A rejected completion (bad path, short SHA, missing artifact, wrong
-     token) changes nothing. Read the reason, fix it, and call again.
+     token) changes nothing. Read the reason, fix it, and call again. If the
+     reason says the step is not claimed, the lease expired: see "Long sessions
+     and failure".
 7. **Stop.** After `complete_step` succeeds, say what the task is now waiting
    for (the result names the next step and role), then end your work. Do not
    claim another step.
@@ -72,8 +77,11 @@ yourself.
 
 ## Long sessions and failure
 
-- Leases last 30 minutes. In a long conversation call
-  `heartbeat(step_id, claim_token)` about every 15 minutes.
+- Leases last 30 minutes. Call `heartbeat(step_id, claim_token)` on every
+  user turn and right before `complete_step`.
+- If any call says the step is not claimed (the lease expired), call
+  `claim_step(step_id)` again and use the **new** `claim_token`. If that is
+  rejected because someone else holds the step, report it and stop.
 - If the user abandons the work, call `release_step(step_id, reason,
   claim_token)` with a short reason, so another session can take over.
 - If you fail or get stuck, call `release_step` with the reason. Never fake a
