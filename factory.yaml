@@ -1,0 +1,31 @@
+factory: taktloop
+server: {host: 127.0.0.1, port: 8765}
+database: .taktloop/factory.db        # gitignored
+workflow:
+  start: design
+  steps:
+    design:
+      kind: agent
+      role: planner
+      skill: brainstorming
+      instructions: >
+        Run brainstorming with the requester until the design doc is written
+        and the requester is happy with it. Do not invoke writing-plans.
+      output:
+        artifacts: [design_doc]        # required artifact names
+      next: design_approval
+    design_approval:
+      kind: human_gate
+      role: approver
+      on_approve: plan
+      on_reject: design                # reopens design as round n+1, with the reason
+    plan:
+      kind: agent
+      role: planner
+      skill: writing-plans
+      instructions: >
+        Write the plan from the approved design doc. Do not ask for an
+        execution mode and do not start executing.
+      output:
+        artifacts: [plan]
+      next: done                       # reserved name: the task is finished
