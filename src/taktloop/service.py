@@ -56,6 +56,9 @@ class Service:
              body: Callable[[Tx, _Ids], Any], *, writes: bool = True) -> Any:
         """One transaction per operation; rejections are rolled back, then recorded."""
         ids = _Ids()
+        with self._store.transaction() as tx:  # own txn: expiry survives a rejected op
+            for run in tx.step_runs_with_status(["claimed"]):
+                self._expire(tx, run)
         try:
             with self._store.transaction() as tx:
                 result = body(tx, ids)
@@ -135,8 +138,6 @@ class Service:
 
     def list_open_steps(self, caller: Caller) -> list[OpenStep]:
         def body(tx: Tx, ids: _Ids) -> list[OpenStep]:
-            for run in tx.step_runs_with_status(["claimed"]):
-                self._expire(tx, run)
             out = []
             for run in tx.step_runs_with_status(["open"]):
                 step = self._wf.step(run.step)
@@ -212,9 +213,10 @@ class Service:
             if not reason.strip():
                 raise Rejected("reason is required")
             if run.status != "claimed":
-                raise Rejected("step is not claimed")
+                raise Rejected("step is not claimed (already free)")
             if not force and not (claim_token and same_token(run.claim_token, claim_token)):
                 raise Rejected("claim token does not match")
+            detail["was_claimed_by"] = run.claimed_by
             tx.update_step_run(run.id, status="open", claimed_by=None, claim_token=None,
                                lease_expires_at=None)
             return self._summary(tx, tx.get_task(run.task_id))

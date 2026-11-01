@@ -256,3 +256,20 @@ def test_concurrent_claims_one_winner(tmp_path):
     store.close()
     assert len(results) == 1
     assert len(errors) == 7 and all(isinstance(e, Rejected) for e in errors)
+
+
+def test_expiry_is_recorded_before_the_rejection_it_causes(svc, store, clock):
+    t, c = claimed(svc)
+    clock.now += timedelta(minutes=31)
+    with pytest.raises(Rejected, match="lease expired"):
+        svc.heartbeat(ME, t.step_id, c.claim_token)
+    tail = [(e.operation, e.result) for e in events(store)][-2:]
+    assert tail == [("lease_expired", "ok"), ("heartbeat", "rejected")]
+
+
+def test_forced_release_records_the_evicted_holder(svc, store):
+    t, _ = claimed(svc)
+    svc.release_step(ME, t.step_id, "session crashed", force=True)
+    assert events(store)[-1].detail["was_claimed_by"] == "local (claude-code)"
+    with pytest.raises(Rejected, match="already free"):
+        svc.release_step(ME, t.step_id, "again", force=True)

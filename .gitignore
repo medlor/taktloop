@@ -5,3 +5,4 @@ docs/idea/*.jpg
 .taktloop/
 .venv/
 __pycache__/
+.pytest_cache/

@@ -57,8 +57,7 @@ it. Do nothing else.
      `git rev-parse HEAD`) and `branch` (from `git branch --show-current`).
    - A rejected completion (bad path, short SHA, missing artifact, wrong
      token) changes nothing. Read the reason, fix it, and call again. If the
-     reason says the step is not claimed, the lease expired: see "Long sessions
-     and failure".
+     reason says the step is not claimed, see "Long sessions and failure".
 7. **Stop.** After `complete_step` succeeds, say what the task is now waiting
    for (the result names the next step and role), then end your work. Do not
    claim another step.
@@ -77,12 +76,18 @@ yourself.
 
 ## Long sessions and failure
 
-- Leases last 30 minutes. Call `heartbeat(step_id, claim_token)` on every
-  user turn and right before `complete_step`.
-- If any call says the step is not claimed (the lease expired), call
-  `claim_step(step_id)` again and use the **new** `claim_token`. If that is
-  rejected because someone else holds the step, report it and stop.
+- Leases last 30 minutes. Call `heartbeat(step_id, claim_token)` once when a
+  new user message arrives, never more than once per turn. Do not add an
+  extra heartbeat before `complete_step`; if the lease ran out, the call says
+  so and you recover as below.
+- If `heartbeat` or `complete_step` says the step is not claimed, the lease
+  expired or a human released it. While you are still working the step with
+  the user, call `claim_step(step_id)` again and use the **new**
+  `claim_token`. If that is rejected (someone else holds it, or it is no
+  longer open), report it and stop. If the user says it was released on
+  purpose, do not re-claim.
 - If the user abandons the work, call `release_step(step_id, reason,
-  claim_token)` with a short reason, so another session can take over.
+  claim_token)` with a short reason, so another session can take over. If it
+  answers "step is not claimed (already free)", there is nothing left to do.
 - If you fail or get stuck, call `release_step` with the reason. Never fake a
   completion or invent a commit SHA.

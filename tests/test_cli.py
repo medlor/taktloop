@@ -143,3 +143,25 @@ def test_version_flag_not_on_subcommand(capsys):
         cli.main(["steps", "--version"])
     assert exc.value.code == 2
     assert "unrecognized arguments: --version" in capsys.readouterr().err
+
+
+def test_render_done_task_has_no_step_line():
+    d = dict(DETAIL, status="done", current_step=None, step_id=None, waiting_for="done")
+    out = cli.render_task_detail(d)
+    assert "step:" not in out
+    assert out.splitlines()[1] == "waiting for: done"
+
+
+def test_rejection_reason_does_not_widen_the_result_column():
+    d = dict(DETAIL)
+    d["history"] = [
+        {"at": "2026-11-01T09:05:00Z", "caller": "me", "operation": "decide_gate",
+         "step": "design_approval", "result": "ok", "reason": None,
+         "detail": {"decision": "approve"}},
+        {"at": "2026-11-01T09:06:00Z", "caller": "me", "operation": "complete_step",
+         "step": "design", "result": "rejected", "reason": "claim token does not match",
+         "detail": {"artifacts": [{"name": "design_doc"}]}},
+    ]
+    rows = cli.render_task_detail(d).splitlines()[-2:]
+    assert rows[0].endswith("design_approval  ok        approve")
+    assert rows[1].endswith("design           rejected  claim token does not match (design_doc)")

@@ -1,6 +1,8 @@
 """End to end: a claimed task survives a core restart (M1 acceptance)."""
 
 import json
+import os
+import signal
 import socket
 import subprocess
 import time
@@ -66,7 +68,7 @@ class Core:
               open(self.dir / f"err{self.runs}.log", "w") as err):
             self.proc = subprocess.Popen(
                 ["uv", "run", "taktloop", "--config", self.cfg, "serve"],
-                cwd=ROOT, stdout=out, stderr=err,
+                cwd=ROOT, stdout=out, stderr=err, start_new_session=True,
             )
         deadline = time.monotonic() + 20
         while time.monotonic() < deadline:
@@ -78,11 +80,11 @@ class Core:
 
     def stop(self):
         if self.proc and self.proc.poll() is None:
-            self.proc.terminate()
+            os.killpg(self.proc.pid, signal.SIGTERM)  # uv and the core it started
             try:
                 self.proc.wait(timeout=10)
             except subprocess.TimeoutExpired:
-                self.proc.kill()
+                os.killpg(self.proc.pid, signal.SIGKILL)
                 self.proc.wait()
 
     def client(self):
@@ -142,3 +144,20 @@ def test_task_survives_restart(core, capsys):
     task = json.loads(capsys.readouterr().out)
     assert task["status"] == "done"
     assert len(task["artifacts"]) == 2
+
+
+def test_ctrl_c_stops_core_with_an_open_connection(core):
+    """A client holding a request open (as Claude Code does) must not block Ctrl-C."""
+    port = int(core.url.split(":")[2].split("/")[0])
+    with socket.create_connection(("127.0.0.1", port)) as held:
+        held.sendall(b"POST /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+                     b"Content-Type: application/json\r\nContent-Length: 100\r\n\r\n{")
+        time.sleep(0.5)
+        os.killpg(core.proc.pid, signal.SIGINT)  # what Ctrl-C sends to the terminal's group
+        try:
+            core.proc.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            pytest.fail("core still running 15 s after Ctrl-C")
+    log = (core.dir / f"err{core.runs}.log").read_text()
+    assert "Application shutdown complete" in log  # a clean shutdown, not a forced one
+    assert "Traceback" not in log

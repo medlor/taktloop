@@ -103,20 +103,25 @@ def _event_detail(e: dict) -> str:
     return ""
 
 
+def _event_note(e: dict) -> str:
+    """Last history column: the rejection reason first, then what the call carried."""
+    detail = _event_detail(e)
+    if not e["reason"]:
+        return detail
+    return f"{e['reason']} ({detail})" if detail else e["reason"]
+
+
 def render_task_detail(d: dict) -> str:
-    lines = [
-        f"#{d['id']} {d['title']} [{d['status']}]",
-        f"step: {d['current_step'] or '-'}  (step id {d['step_id'] if d['step_id'] is not None else '-'})",
-        f"waiting for: {d['waiting_for']}",
-        "",
-        "artifacts:",
-    ]
+    lines = [f"#{d['id']} {d['title']} [{d['status']}]"]
+    if d["step_id"] is not None:
+        lines.append(f"step: {d['current_step']}  (step id {d['step_id']})")
+    lines += [f"waiting for: {d['waiting_for']}", "", "artifacts:"]
     arts = [(a["name"], f"{a['path']}@{a['commit'][:12]}", a["branch"], f"{a['step']} r{a['round']}")
             for a in d["artifacts"]]
     lines += ["  " + ln for ln in _table(arts)] if arts else ["  none"]
     lines += ["", "history:"]
     hist = [
-        (_when(e["at"]), e["caller"], e["operation"], e["step"] or "-", e["result"] + (f": {e['reason']}" if e["reason"] else ""), _event_detail(e))
+        (_when(e["at"]), e["caller"], e["operation"], e["step"] or "-", e["result"], _event_note(e))
         for e in d["history"]
     ]  # fmt: skip
     lines += ["  " + ln for ln in _table(hist)] if hist else ["  none"]
@@ -205,16 +210,9 @@ def _request(ns) -> tuple[str, dict, object]:
 
 
 def _serve(cfg) -> int:
-    from datetime import timedelta
+    from taktloop import serve  # the server stack; client commands never load it
 
-    from taktloop.mcp_server import build_server
-    from taktloop.service import Service
-    from taktloop.store import Store
-
-    cfg.database.parent.mkdir(parents=True, exist_ok=True)
-    service = Service(Store(cfg.database), cfg.workflow, timedelta(minutes=cfg.lease_minutes))
-    print(f"taktloop core for factory '{cfg.factory}' on {cfg.url}", flush=True)
-    build_server(service).run("streamable-http", host=cfg.host, port=cfg.port)
+    serve.run(cfg)
     return 0
 
 
