@@ -2,3 +2,6 @@
 .claude/
 .env
 docs/idea/*.jpg
+.taktloop/
+.venv/
+__pycache__/
