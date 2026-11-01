@@ -1,3 +1,5 @@
+from importlib.metadata import version
+
 import pytest
 
 from taktloop import cli
@@ -119,3 +121,25 @@ def test_options_accepted_after_subcommand(monkeypatch, capsys):
     assert str(p.parse_args(["serve", "--config", "f.yaml"]).config) == "f.yaml"
     ns = p.parse_args(["--url", "http://a/mcp", "steps"])
     assert ns.url == "http://a/mcp" and ns.json is False
+
+
+@pytest.mark.parametrize("argv", [
+    ["--version"],
+    ["--json", "--version"],
+    ["--config", "/nonexistent/factory.yaml", "--version"],
+    ["--url", "http://127.0.0.1:1/mcp", "--version"],
+])  # fmt: skip
+def test_version_flag(argv, capsys):
+    with pytest.raises(SystemExit) as exc:
+        cli.main(argv)
+    assert exc.value.code == 0
+    out = capsys.readouterr()
+    assert out.out == f"taktloop {version('taktloop')}\n"
+    assert out.err == ""
+
+
+def test_version_flag_not_on_subcommand(capsys):
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["steps", "--version"])
+    assert exc.value.code == 2
+    assert "unrecognized arguments: --version" in capsys.readouterr().err

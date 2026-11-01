@@ -153,6 +153,7 @@ def _parser() -> argparse.ArgumentParser:
                             **defaults.get("json", {}))
 
     p = argparse.ArgumentParser(prog="taktloop")
+    p.add_argument("--version", action="version", version=f"%(prog)s {version('taktloop')}")
     common(p, config={"default": Path("factory.yaml")})
     # subparser copies must not overwrite a value given before the subcommand
     hide = {"default": argparse.SUPPRESS}
