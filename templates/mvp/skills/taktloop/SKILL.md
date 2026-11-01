@@ -35,13 +35,19 @@ tell the user to register them and stop:
    - If `rejection_reason` is set, this is a revision round: the previous
      result was rejected. Read the earlier artifact, address the reason, and
      produce a revised version.
-5. **Step boundary beats skill chaining.** When every required artifact exists,
-   you are done with this step. Do **not** invoke the skill the running skill
+5. **Finish the skill's own review first.** An artifact is final only after the
+   running skill's in-chat review checkpoint is done (for example "please
+   review the design doc") and the user is happy with it. Make the requested
+   changes, then continue. Never complete at the first draft or first commit.
+   Order: run skill -> in-chat review until the user is happy -> commit the
+   final version -> `complete_step` with that commit -> stop.
+
+   **Step boundary beats skill chaining.** Once the artifact is final, do **not** invoke the skill the running skill
    says comes next (for example a brainstorming skill that says to invoke
    writing-plans, or a planning skill that asks for an execution mode). Those
    belong to later steps, claimed by later sessions.
-6. **Commit, then complete.**
-   - Commit each artifact on the current branch.
+6. **Commit the final version, then complete.**
+   - Commit each final artifact on the current branch (after the review).
    - Call `complete_step(step_id, claim_token, artifacts=[...])` with one entry
      per required artifact: `name` (as listed in `required_artifacts`), `path`
      (repo-relative), `commit` (the full 40-character SHA from

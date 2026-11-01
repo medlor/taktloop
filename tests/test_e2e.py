@@ -111,8 +111,12 @@ def test_task_survives_restart(core, capsys):
     step_id = run("list_open_steps").structured_content["steps"][0]["step_id"]
     token = run("claim_step", step_id=step_id).structured_content["claim_token"]
 
-    # a session without the claim token is rejected
-    assert run("complete_step", step_id=step_id, claim_token="0" * 32).is_error
+    # a session without the claim token is rejected, for complete and release
+    art = [{"name": "design_doc", "path": "docs/design.md", "commit": SHA, "branch": "beta"}]
+    r = run("complete_step", step_id=step_id, claim_token="0" * 32, artifacts=art)
+    assert r.is_error and "claim token" in r.content[0].text
+    r = run("release_step", step_id=step_id, reason="steal")
+    assert r.is_error and "claim token" in r.content[0].text
 
     core.stop()
     core.start()
