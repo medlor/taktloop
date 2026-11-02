@@ -182,7 +182,7 @@ def _spy(monkeypatch):
 def test_token_resolution_order(monkeypatch, tmp_path, capsys):
     seen = _spy(monkeypatch)
     cfg = tmp_path / "factory.yaml"
-    cfg.write_text("workflow:\n  start: only\n  steps:\n    only: {kind: agent, role: planner, skill: s, output: {artifacts: [doc]}, next: done}\ncli: {identity: from-config}\n")
+    cfg.write_text("workflow:\n  start: only\n  steps:\n    only: {kind: agent, role: planner, skill: s, output: {artifacts: [doc]}, next: done}\ncli: {identity: from-config}\nauth: {issuer: http://127.0.0.1:8766, audience: taktloop}\n")
     monkeypatch.delenv("TAKTLOOP_TOKEN")
     assert cli.main(["--config", str(cfg), "steps"]) == 0 and seen["token"] == "fetched-from-config"
     assert cli.main(["--config", str(cfg), "steps", "--as", "me"]) == 0 and seen["token"] == "fetched-me"

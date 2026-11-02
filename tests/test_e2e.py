@@ -1,4 +1,4 @@
-"""End to end: a claimed task survives a core restart (M1 acceptance)."""
+"""End to end against a real core and a real dev issuer: tokens, restart, Ctrl-C."""
 
 import json
 import os
@@ -10,9 +10,13 @@ from pathlib import Path
 
 import anyio
 import pytest
+import httpx2
 from mcp import Client, Implementation
+from mcp.client.streamable_http import streamable_http_client
+from mcp.shared._httpx_utils import create_mcp_http_client
 
 from taktloop.cli import main
+from taktloop.token_client import fetch_token
 
 ROOT = Path(__file__).resolve().parent.parent
 SHA = "a" * 40
@@ -23,6 +27,7 @@ CONFIG = """\
 factory: e2e
 server: {{host: 127.0.0.1, port: {port}}}
 database: {db}
+auth: {{issuer: {issuer}, audience: taktloop}}
 workflow:
   start: design
   steps:
@@ -51,14 +56,15 @@ workflow:
 
 
 class Core:
-    def __init__(self, tmp_path: Path):
+    def __init__(self, tmp_path: Path, issuer: str, token: str):
         with socket.socket() as s:
             s.bind(("127.0.0.1", 0))
             port = s.getsockname()[1]
         self.url = f"http://127.0.0.1:{port}/mcp"
         self.dir = tmp_path
         self.cfg = str(tmp_path / "factory.yaml")
-        (tmp_path / "factory.yaml").write_text(CONFIG.format(port=port, db=tmp_path / "f.db"))
+        (tmp_path / "factory.yaml").write_text(CONFIG.format(port=port, db=tmp_path / "f.db", issuer=issuer))
+        self.token = token
         self.proc: subprocess.Popen | None = None
         self.runs = 0
 
@@ -88,12 +94,16 @@ class Core:
                 self.proc.wait()
 
     def client(self):
-        return Client(self.url, client_info=Implementation(name="claude-code", version="0"))
+        http = create_mcp_http_client(headers={"Authorization": f"Bearer {self.token}"})
+        return Client(streamable_http_client(self.url, http_client=http),
+                      client_info=Implementation(name="claude-code", version="0"))
 
 
 @pytest.fixture
-def core(tmp_path):
-    c = Core(tmp_path)
+def core(tmp_path, real_issuer, monkeypatch):
+    issuer, creds = real_issuer
+    monkeypatch.setenv("TAKTLOOP_TOKEN", fetch_token("tobias", creds))  # the CLI's identity
+    c = Core(tmp_path, issuer, fetch_token("agent-a", creds))
     c.start()
     yield c
     c.stop()
@@ -144,6 +154,16 @@ def test_task_survives_restart(core, capsys):
     task = json.loads(capsys.readouterr().out)
     assert task["status"] == "done"
     assert len(task["artifacts"]) == 2
+
+
+def test_request_without_token_gets_401(core):
+    r = httpx2.post(core.url, json={"jsonrpc": "2.0", "id": 1, "method": "ping"},
+                    headers={"Accept": "application/json, text/event-stream"})
+    assert r.status_code == 401
+    r = httpx2.post(core.url, json={"jsonrpc": "2.0", "id": 1, "method": "ping"},
+                    headers={"Accept": "application/json, text/event-stream", "Authorization": "Bearer junk"})
+    assert r.status_code == 401
+    assert "bearer token refused" in (core.dir / f"err{core.runs}.log").read_text()
 
 
 def test_ctrl_c_stops_core_with_an_open_connection(core):

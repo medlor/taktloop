@@ -9,6 +9,7 @@ from types import FrameType
 
 import uvicorn
 
+from taktloop.auth import JwtVerifier
 from taktloop.config import FactoryConfig
 from taktloop.mcp_server import build_server
 from taktloop.service import Service
@@ -38,7 +39,8 @@ def _cancelled(record: logging.LogRecord) -> bool:
 def run(cfg: FactoryConfig) -> None:
     cfg.database.parent.mkdir(parents=True, exist_ok=True)
     service = Service(Store(cfg.database), cfg.workflow, timedelta(minutes=cfg.lease_minutes))
-    app = build_server(service).streamable_http_app(host=cfg.host)
+    verifier = JwtVerifier(cfg.auth_issuer, cfg.auth_audience)
+    app = build_server(service, cfg.factory, verifier, cfg.url).streamable_http_app(host=cfg.host)
     # Not MCPServer.run(): it sets no graceful-shutdown timeout, and on Python >= 3.12
     # shutdown then waits forever for a client that keeps a request open (Claude
     # Code does). After the timeout, uvicorn cancels those requests.

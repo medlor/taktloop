@@ -12,6 +12,8 @@ def test_template_and_repo_factory_load():
     b = load_config(ROOT / "factory.yaml")
     assert a.workflow == b.workflow
     assert a.workflow.start == "design"
+    for cfg in (a, b):
+        assert (cfg.auth_issuer, cfg.auth_audience, cfg.cli_identity) == ("http://127.0.0.1:8766", "taktloop", "tobias")
 
 
 def test_bridge_skill_frontmatter():

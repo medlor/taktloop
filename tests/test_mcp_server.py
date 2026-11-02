@@ -3,7 +3,11 @@ import re
 import pytest
 from mcp import Client, Implementation
 
+from conftest import ALL_ROLES, as_identity
 from test_service_steps import MVP, Clock  # noqa: F401
+from mcp.server.auth.middleware.auth_context import auth_context_var as mcp_auth_context
+
+from taktloop import mcp_server
 from taktloop.mcp_server import build_server
 from taktloop.service import Service
 from taktloop.store import Store
@@ -28,9 +32,11 @@ def client_for():
     svc = Service(store, parse_workflow(MVP), clock=Clock())
 
     def make():
-        return Client(build_server(svc), client_info=Implementation(name="claude-code", version="0"))
+        return Client(build_server(svc, "taktloop", None, None),
+                      client_info=Implementation(name="claude-code", version="0"))
 
-    yield make
+    with as_identity("local", *ALL_ROLES):
+        yield make
     store.close()
 
 
@@ -63,6 +69,39 @@ async def test_executor_name_reaches_waiting_for(client_for):
         await c.call_tool("claim_step", {"step_id": t.structured_content["step_id"]})
         r = await c.call_tool("get_task", {"task_id": t.structured_content["id"]})
         assert "local (claude-code)" in r.structured_content["waiting_for"]
+
+
+async def test_no_token_is_not_authenticated(client_for):
+    token = mcp_auth_context.set(None)
+    try:
+        async with client_for() as c:
+            r = await c.call_tool("list_tasks", {})
+    finally:
+        mcp_auth_context.reset(token)
+    assert r.is_error and r.content[0].text.endswith("not authenticated")
+
+
+async def test_subject_from_token_reaches_history(client_for):
+    with as_identity("agent-a", "planner"):
+        async with client_for() as c:
+            t = await c.call_tool("create_task", {"title": "T"})
+            await c.call_tool("claim_step", {"step_id": t.structured_content["step_id"]})
+            r = await c.call_tool("get_task", {"task_id": t.structured_content["id"]})
+    assert "agent-a (claude-code)" in r.structured_content["waiting_for"]
+    assert any(e["caller"] == "agent-a (claude-code)" for e in r.structured_content["history"])
+
+
+async def test_roles_come_from_this_factorys_scopes(monkeypatch, client_for):
+    seen = []
+    monkeypatch.setattr(mcp_server.Service, "list_tasks", lambda self, caller, inc: seen.append(caller) or [])
+    with as_identity("agent-a", "planner", factory="other"):
+        async with client_for() as c:
+            await c.call_tool("list_tasks", {})
+    with as_identity("agent-b", "planner", "reviewer"):
+        async with client_for() as c:
+            await c.call_tool("list_tasks", {})
+    assert [(x.subject, x.roles) for x in seen] == [
+        ("agent-a", frozenset()), ("agent-b", frozenset({"planner", "reviewer"}))]
 
 
 async def test_list_results_are_wrapped(client_for):

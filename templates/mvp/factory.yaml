@@ -1,6 +1,8 @@
 factory: taktloop
 server: {host: 127.0.0.1, port: 8765}
 database: .taktloop/factory.db        # gitignored
+auth: {issuer: http://127.0.0.1:8766, audience: taktloop}
+cli: {identity: tobias}
 workflow:
   start: design
   steps:

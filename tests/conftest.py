@@ -1,19 +1,38 @@
 import socket
 import threading
 import time
+from contextlib import contextmanager
 
 import pytest
 import uvicorn
+from mcp.server.auth.middleware.auth_context import auth_context_var
+from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
+from mcp.server.auth.provider import AccessToken
 
 from taktloop.issuer.app import build_app
 from taktloop.issuer.config import load_issuer_config
 from taktloop.issuer.state import init_state
 
 
+ALL_ROLES = ("requester", "planner", "reviewer", "approver", "factory_owner")
+
+
 @pytest.fixture(autouse=True)
 def _bearer_token(monkeypatch):
-    """CLI client calls need a token; any string will do until the core checks it."""
+    """CLI calls against fake cores need some token; tests against a real core fetch real ones."""
     monkeypatch.setenv("TAKTLOOP_TOKEN", "test-token")
+
+
+@contextmanager
+def as_identity(subject: str, *roles: str, factory: str = "taktloop"):
+    """Run in-memory `Client(build_server(...))` sessions opened inside as this validated identity."""
+    scopes = [f"taktloop:{factory}:{r}" for r in roles]
+    token = AccessToken(token="in-memory", client_id=subject, scopes=scopes, subject=subject)
+    reset = auth_context_var.set(AuthenticatedUser(token))
+    try:
+        yield
+    finally:
+        auth_context_var.reset(reset)
 
 
 @pytest.fixture

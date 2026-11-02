@@ -1,9 +1,13 @@
 from pathlib import Path
 
+import pytest
+
 from taktloop.config import load_config
+from taktloop.workflow import WorkflowError
 
 WORKFLOW = """
 factory: demo
+auth: {issuer: http://127.0.0.1:8766, audience: taktloop}
 workflow:
   start: only
   steps:
@@ -27,3 +31,13 @@ def test_defaults_and_relative_db(tmp_path: Path):
     assert cfg.database == tmp_path / ".taktloop/factory.db"
     assert cfg.url == "http://127.0.0.1:8765/mcp"
     assert cfg.workflow.start == "only"
+    assert cfg.auth_issuer == "http://127.0.0.1:8766"
+    assert cfg.auth_audience == "taktloop"
+
+
+@pytest.mark.parametrize("auth", ["", "auth: {issuer: http://127.0.0.1:8766}\n", "auth: {audience: taktloop}\n"])
+def test_auth_block_is_required(tmp_path: Path, auth: str):
+    path = tmp_path / "factory.yaml"
+    path.write_text(WORKFLOW.replace("auth: {issuer: http://127.0.0.1:8766, audience: taktloop}\n", auth))
+    with pytest.raises(WorkflowError, match="factory.yaml: 'auth' block with issuer and audience is required"):
+        load_config(path)
