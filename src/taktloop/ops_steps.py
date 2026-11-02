@@ -79,7 +79,8 @@ class StepOps(ServiceBase):
                 target = self._after_issues(tx, run.task_id, step)
             else:
                 target = step.on_pass if outcome == "pass" else step.next
-            target = step.on_fail if found[1] else target
+            if found[1]:  # the event says what the step run says: this round failed
+                target, detail["outcome"] = step.on_fail, "failed"
             detail["next"] = target
             opened = self._advance(tx, run.task_id, target)
             if outcome == "issues" and target == step.on_escalate:

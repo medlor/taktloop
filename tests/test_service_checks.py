@@ -118,7 +118,8 @@ def test_check_expect_failure_reopens_build_with_feedback(env):
     assert ctx.feedback.kind == "check_failed" and ctx.feedback.by == "core"
     assert "ci_run=12345" in ctx.feedback.text
     assert "workflow_run.conclusion is failure, expected success" in ctx.feedback.text
-    assert history(svc, "complete_step")[-1].detail["next"] == "build"
+    done = history(svc, "complete_step")[-1].detail
+    assert (done["outcome"], done["next"]) == ("failed", "build")
 
 
 def test_check_uses_latest_change_round(env):

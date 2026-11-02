@@ -129,9 +129,17 @@ def real_issuer(tmp_path):
 
 
 @pytest.fixture
-def fake_github():
+def github_runs() -> dict[str, dict]:
+    """Workflow runs the fake GitHub server knows, by run id: extra `workflow_run` fields
+    (head_sha, path, status, conclusion, ...) a test fills in before naming the run."""
+    return {}
+
+
+@pytest.fixture
+def fake_github(github_runs):
     """A fake GitHub MCP server (uvicorn in a thread). Yields (URL, calls); each call is a dict
-    of the tool name, its arguments and the bearer token received."""
+    of the tool name, its arguments and the bearer token received. Runs come from github_runs;
+    an unregistered id is a completed run with no other fields, "999" is unknown (404)."""
     from mcp.server.mcpserver import MCPServer
     from mcp.server.mcpserver.exceptions import ToolError
     from starlette.middleware.base import BaseHTTPMiddleware
@@ -145,7 +153,8 @@ def fake_github():
             raise ToolError("failed to get workflow run: 404 Not Found")
         calls.append({"tool": "actions_get", "token": seen[-1], "method": method, "owner": owner,
                       "repo": repo, "resource_id": resource_id})
-        return {"method": method, "workflow_run": {"id": int(resource_id), "status": "completed"}}
+        return {"method": method, "workflow_run": {"id": int(resource_id), "status": "completed",
+                                                   **github_runs.get(resource_id, {})}}
 
     @mcp_server.tool()
     def sleepy(seconds: float) -> dict:
