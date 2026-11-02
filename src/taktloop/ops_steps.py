@@ -122,12 +122,14 @@ class StepOps(ServiceBase):
 
     def _after_issues(self, tx: Tx, task_id: int, review: Step) -> str:
         """on_escalate once this review step has max_issue_rounds `issues` verdicts since its
-        last `pass` or the task last leaving the escalation gate; otherwise on_issues."""
+        last `pass`, override or the task last leaving the escalation gate; else on_issues."""
         if review.on_escalate is None:
             return review.on_issues
         runs = tx.list_step_runs(task_id)
         left = max((r.id for r in runs if r.status != "open" and (r.step == review.on_escalate
-                    or (r.step == review.name and r.outcome == "pass"))), default=0)
+                    or (r.step == review.name and r.outcome == "pass")
+                    or (r.step in (review.name, review.review_of)
+                        and r.outcome == "superseded"))), default=0)
         count = sum(1 for r in runs if r.step == review.name and r.outcome == "issues"
                     and r.id > left)
         return review.on_escalate if count >= review.max_issue_rounds else review.on_issues

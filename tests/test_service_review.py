@@ -151,6 +151,32 @@ steps:
     assert s.current_step == "plan"
 
 
+def test_issue_count_restarts_after_override(store, clock):
+    wf = parse_workflow(yaml.safe_load("""
+start: plan
+steps:
+  plan: {kind: agent, role: planner, skill: s, output: {artifacts: [plan]}, next: plan_review}
+  plan_review: {kind: agent, role: reviewer, skill: s, review_of: plan, on_pass: gate,
+                on_issues: plan, max_issue_rounds: 2, on_escalate: plan_escalation}
+  gate: {kind: human_gate, role: approver, on_approve: done, on_reject: plan}
+  plan_escalation: {kind: human_gate, role: approver, on_approve: done, on_reject: plan}
+"""))
+    svc = Service(store, wf, clock=clock)
+    tid = svc.create_task(ME, "T").id
+    work(svc, tid, "plan")
+    t = svc.get_task(ME, tid)
+    c = svc.claim_step(ME, t.step_id)
+    svc.complete_step(ME, t.step_id, c.claim_token, "issues", [], "one")
+    work(svc, tid, "plan", SHA2)
+    svc.override_review(ME, tid, "plan_review", "good enough")
+    svc.decide_gate(ME, tid, "gate", "reject", "again")
+    work(svc, tid, "plan", SHA3)
+    t = svc.get_task(ME, tid)
+    c = svc.claim_step(ME, t.step_id)
+    s = svc.complete_step(ME, t.step_id, c.claim_token, "issues", [], "two")
+    assert s.current_step == "plan"
+
+
 def test_escalation_reject_to_design(svc):
     tid = at_review(svc)
     review(svc, tid, "issues", "one")
