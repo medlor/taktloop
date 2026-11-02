@@ -51,7 +51,7 @@ class GateOps(ServiceBase):
                                closed_at=self._clock())
             self._advance(tx, task_id, dest)
             return self._summary(tx, tx.get_task(task_id))
-        return self._run(caller, "decide_gate", names, body)
+        return self._run(caller, "decide_gate", names, body, task_id=task_id)
 
     def override_review(self, caller: Caller, task_id: int, review_step: str,
                         reason: str) -> TaskSummary:
@@ -87,4 +87,4 @@ class GateOps(ServiceBase):
                                closed_at=self._clock())
             self._advance(tx, task_id, review.on_pass)
             return self._summary(tx, tx.get_task(task_id))
-        return self._run(caller, "override_review", names, body)
+        return self._run(caller, "override_review", names, body, task_id=task_id)

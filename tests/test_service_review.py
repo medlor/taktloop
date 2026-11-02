@@ -243,6 +243,8 @@ def test_override_needs_approver_and_a_reason(svc):
     with pytest.raises(Rejected) as exc:
         svc.override_review(planner, tid, "plan_review", "mine")
     assert exc.value.reason == "override_review requires role approver; you have planner"
+    e = override_event(svc, tid)
+    assert (e.subject, e.roles, e.result, e.reason) == ("p", ["planner"], "rejected", exc.value.reason)
     with pytest.raises(Rejected, match="reason is required"):
         svc.override_review(ME, tid, "plan_review", "  ")
     with pytest.raises(Rejected, match="plan is not a review step"):

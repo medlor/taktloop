@@ -57,10 +57,12 @@ class ServiceBase:
                         ids.task_id, ids.step_run_id, detail, result, reason)
 
     def _run(self, caller: Caller, operation: str, detail: dict[str, Any],
-             body: Callable[[Tx, _Ids], Any], *, writes: bool = True) -> Any:
+             body: Callable[[Tx, _Ids], Any], *, writes: bool = True,
+             task_id: int | None = None) -> Any:
         """One transaction per operation; rejections are rolled back, then recorded.
-        Step-bound roles are checked again by the body once it has loaded the step."""
-        ids = _Ids()
+        Step-bound roles are checked again by the body once it has loaded the step.
+        `task_id`, when the operation names one, files even a role refusal under that task."""
+        ids = _Ids(task_id)
         try:
             require(caller, operation)  # before anything else, even lease expiry
             with self._store.transaction() as tx:  # own txn: expiry survives a rejected op
