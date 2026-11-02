@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import secrets
 
-from taktloop.checks import CheckDecl, CheckUnavailable, Mismatch, compare, describe, resolve
+from taktloop.checks import (CheckDecl, CheckUnavailable, Mismatch, compare, describe, lookup,
+                             resolve)
 from taktloop.models import ArtifactIn, Claim, TaskSummary
 from taktloop.ops_base import CORE, Caller, ServiceBase, _check_owner, _holder, _Ids
 from taktloop.permissions import require
@@ -50,13 +51,11 @@ class StepOps(ServiceBase):
             run = self._load_owned(tx, ids, caller, "complete_step", step_id, claim_token)
             step = self._wf.step(run.step)
             _check_evidence(step.evidence, evidence)
-            if step.check is None:
-                return run.task_id, None
-            if outcome != "completed":
+            if step.check and outcome != "completed":
                 raise Rejected(f"outcome must be 'completed', got {outcome!r}")
             arts = {a.name: a for a in latest_rounds(self._artifacts(tx, run.task_id))}
-            try:
-                return run.task_id, resolve(step.check, evidence, arts)
+            try:  # the check's arguments and wanted values, or None when the step has no check
+                return run.task_id, step.check and resolve(step.check, evidence, arts)
             except CheckUnavailable as e:
                 raise Rejected(f"CI check could not run: {e}") from None
 
@@ -99,8 +98,7 @@ class StepOps(ServiceBase):
 
     def _check(self, caller: Caller, task_id: int, step_id: int, decl: CheckDecl,
                evidence: dict[str, str], detail: dict) -> tuple[list[Mismatch], list[Mismatch]]:
-        """Run the check between transactions and record it: (match, expect) mismatches.
-        Not runnable -> refused; the apply transaction re-checks the claim."""
+        """Run the check outside any transaction, record it: (match, expect) mismatches."""
         try:
             if self._checker is None:
                 raise CheckUnavailable("no checker configured")
@@ -111,15 +109,14 @@ class StepOps(ServiceBase):
                 raise Rejected(f"CI check could not run: {e}")
             return self._run(caller, "complete_step", detail, refuse)
         found = compare(decl.match, result), compare(decl.expect, result)
-        shown, got = found[0] or found[1], {m.field: m.got for m in found[0] + found[1]}
         ran = ", ".join(f"{k}={v}" for k, v in evidence.items())
         with self._store.transaction() as tx:
             self._event(tx, CORE, "check", _Ids(task_id, step_id), {
                 "server": decl.mcp_server, "tool": decl.tool, "args": dict(decl.args),
-                "observed": {**decl.match, **decl.expect, **got},
+                "observed": {f: lookup(result, f) for f in [*decl.match, *decl.expect]},
                 "result": "mismatch" if found[0] else "fail" if found[1] else "pass",
                 "summary": f"{decl.mcp_server}.{decl.tool} ({ran}): "
-                           f"{'; '.join(describe(m) for m in shown) or 'pass'}"})
+                           f"{'; '.join(map(describe, found[0] or found[1])) or 'pass'}"})
         return found
 
     def _after_issues(self, tx: Tx, task_id: int, review: Step) -> str:
@@ -155,11 +152,10 @@ class StepOps(ServiceBase):
 
 
 def _check_evidence(keys: tuple[str, ...], evidence: dict[str, str]) -> None:
-    if not keys and evidence:
-        raise Rejected("this step takes no evidence")
-    if keys and (set(evidence) != set(keys) or not all(
-            isinstance(v, str) and v.strip() for v in evidence.values())):
-        raise Rejected(f"evidence must be exactly: {', '.join(keys)}")
+    if set(evidence) != set(keys) or not all(isinstance(v, str) and v.strip()
+                                             for v in evidence.values()):
+        raise Rejected(f"evidence must be exactly: {', '.join(keys)}" if keys
+                       else "this step takes no evidence")
 
 
 def _check_verdict(outcome: str, artifacts: list[ArtifactIn], findings: str | None) -> None:

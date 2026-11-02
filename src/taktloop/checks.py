@@ -90,16 +90,17 @@ def read_result(structured: dict | None, texts: list[str]) -> dict:
     return parsed
 
 
+def lookup(result: Mapping, path: str) -> str | None:
+    """The value at a dotted path as a string, or None when missing."""
+    node: Any = result
+    for part in path.split("."):
+        node = node.get(part) if isinstance(node, Mapping) else None
+    return None if node is None else str(node)
+
+
 def compare(fields: Mapping[str, str], result: Mapping) -> list[Mismatch]:
-    out = []
-    for path, want in fields.items():
-        node: Any = result
-        for part in path.split("."):
-            node = node.get(part) if isinstance(node, Mapping) else None
-        got = None if node is None else str(node)
-        if got != want:
-            out.append(Mismatch(path, got, want))
-    return out
+    return [Mismatch(p, got, want) for p, want in fields.items()
+            if (got := lookup(result, p)) != want]
 
 
 def describe(m: Mismatch) -> str:

@@ -37,6 +37,7 @@ steps:
     on_fail: build
 """))
 BOT = Caller("agent-a", frozenset({"requester", "builder", "verifier"}), "claude-code")
+OTHER = Caller("agent-b", frozenset({"verifier"}), "codex")
 OWNER = Caller("tobias", frozenset({"factory_owner"}))
 SHA_A, SHA_B = "a" * 40, "b" * 40
 
@@ -85,7 +86,8 @@ def test_check_pass_advances(env):
     assert complete().status == "done"
     [check] = history(svc, "check")
     assert check.subject == "core" and check.detail["result"] == "pass"
-    assert check.detail["observed"]["workflow_run.conclusion"] == "success"
+    run = ci()["workflow_run"]  # observed: what the result returned for each declared field
+    assert check.detail["observed"] == {f"workflow_run.{k}": v for k, v in run.items()}
     assert calls[0][:2] == ("github", "actions_get") and calls[0][2]["resource_id"] == "12345"
     assert history(svc, "complete_step")[-1].detail["evidence"] == {"ci_run": "12345"}
 
@@ -155,22 +157,29 @@ def test_check_without_checker_is_refused(store, clock):
         complete()
 
 
-@pytest.mark.parametrize("lose", ["force_release", "lease_expired"])
-def test_check_claim_lost_during_call(env, clock, lose):
+@pytest.mark.parametrize("lose, refusal, waiting", [
+    ("force_release", "not claimed", "waiting for a verifier to pick up verify"),
+    ("lease_expired", "not claimed", "waiting for a verifier to pick up verify"),
+    ("claimed_again", "^step is claimed by agent-b, not you$", "verify in progress by agent-b")],
+    ids=["force_release", "lease_expired", "claimed_again"])
+def test_check_claim_lost_during_call(env, clock, lose, refusal, waiting):
     svc, results, _ = env
     sid, complete = at_verify(svc)
 
-    def lost():
-        if lose == "force_release":  # a call between the transactions: none is open
+    def lost():  # service calls during the check call: no transaction is open
+        if lose == "force_release":
             svc.release_step(OWNER, sid, "stuck", force=True)
-        clock.now += timedelta(minutes=31)
+        else:
+            clock.now += timedelta(minutes=31)
+        if lose == "claimed_again":
+            svc.claim_step(OTHER, sid)
         return ci()
     results.append(lost)
-    with pytest.raises(Rejected, match="not claimed"):
+    with pytest.raises(Rejected, match=refusal):
         complete()
     t = svc.get_task(BOT, 1)
     assert t.current_step == "verify" and t.status == "active"
-    assert t.waiting_for == "waiting for a verifier to pick up verify"
+    assert t.waiting_for.startswith(waiting)
 
 
 def test_evidence_rules(env):
