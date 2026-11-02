@@ -1,14 +1,13 @@
 import pytest
 import yaml
 
-from conftest import ALL_ROLES
+from conftest import ALL_ROLES, SHA
 from taktloop.config import load_config
 from taktloop.models import ArtifactIn
 from taktloop.separation import Record, approved_step, check_approval, check_claim
 from taktloop.service import Caller, Rejected, Service
 from taktloop.workflow import parse_workflow
 from test_service_review import ROOT
-from test_service_steps import SHA, clock, store  # noqa: F401
 
 WF = load_config(ROOT / "factory.yaml").workflow
 A, B, T = (Caller(s, frozenset(ALL_ROLES)) for s in ("agent-a", "agent-b", "tobias"))
@@ -37,6 +36,11 @@ def do(svc, who, tid, outcome="completed", name=None, findings=None):
     c = svc.claim_step(who, sid)
     arts = [ArtifactIn(name=name, path=f"docs/{name}.md", commit=SHA, branch="main")] if name else []
     return svc.complete_step(who, sid, c.claim_token, outcome, arts, findings)
+
+
+def refusals(svc, tid):
+    return [(e.operation, e.subject, e.reason) for e in svc.get_task(T, tid).history
+            if e.result == "rejected"]
 
 
 def to_plan_review(svc, planner=A, designer=A, approver=T):
@@ -73,6 +77,8 @@ def test_designer_cannot_decide_design_approval(strict):
     with pytest.raises(Rejected, match="strict separation"):
         strict.decide_gate(T, tid, None, "reject", "no")
     assert strict.get_task(T, tid).current_step == "design_approval"
+    why = f"strict separation: tobias completed design round 1 of task {tid}"
+    assert refusals(strict, tid) == [("decide_gate", "tobias", why)] * 2
     strict.decide_gate(B, tid, None, "approve")
 
 
@@ -91,6 +97,8 @@ def test_planner_cannot_override(strict):
     tid = to_plan_review(strict, planner=T, approver=B)
     with pytest.raises(Rejected, match=f"tobias completed plan round 1 of task {tid}"):
         strict.override_review(T, tid, "plan_review", "ship it")
+    assert refusals(strict, tid) == [
+        ("override_review", "tobias", f"strict separation: tobias completed plan round 1 of task {tid}")]
     assert strict.override_review(B, tid, "plan_review", "ship it").status == "done"
 
 

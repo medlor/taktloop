@@ -1,4 +1,5 @@
 from importlib.metadata import version
+from pathlib import Path
 
 import pytest
 
@@ -45,12 +46,6 @@ def test_core_down_message_and_exit_code(capsys):
     assert cli.main(["--url", url, "task", "list"]) == 2
     err = capsys.readouterr().err
     assert err == f"taktloop core not reachable at {url} — start it with `uv run taktloop serve`\n"
-
-
-def test_install_skill_copies_both_skills(tmp_path):
-    assert cli.main(["install-skill", "--dest", str(tmp_path / "s")]) == 0
-    assert (tmp_path / "s" / "taktloop" / "SKILL.md").exists()
-    assert (tmp_path / "s" / "taktloop-plan-review" / "SKILL.md").exists()
 
 
 def test_rejection_exit_code(monkeypatch, capsys):
@@ -354,7 +349,31 @@ def test_review_verdicts_render_outcome_and_next_step():
          "executor": "claude-code", "operation": "complete_step", "step": "plan_review",
          "result": "ok", "reason": None,
          "detail": {"outcome": "pass", "findings": None, "artifacts": [], "next": "done"}},
+        {"at": "2026-11-01T09:05:00Z", "subject": "core", "roles": [], "executor": None,
+         "operation": "escalate", "step": "plan_escalation", "result": "ok", "reason": None,
+         "detail": {"review_step": "plan_review", "gate": "plan_escalation", "issue_rounds": 2}},
     ]
-    rows = cli_commands.render_task_detail(d).splitlines()[-2:]
-    assert rows[0].endswith("plan_review  ok  issues → plan_escalation")
-    assert rows[1].endswith("plan_review  ok  pass → done")
+    rows = cli_commands.render_task_detail(d).splitlines()[-3:]
+    assert rows[0].endswith("plan_review      ok  issues → plan_escalation")
+    assert rows[1].endswith("plan_review      ok  pass → done")
+    assert " core " in rows[2] and rows[2].endswith(
+        "escalate       plan_escalation  ok  plan_review failed 2 times → plan_escalation")
+
+
+def test_credentials_resolve_next_to_the_config(monkeypatch, tmp_path):
+    """--as / cli.identity, `token` and `issuer init` find credentials under the config's
+    directory, not the current directory."""
+    seen = _spy(monkeypatch)
+    dirs = []
+    monkeypatch.setattr(cli_commands, "fetch_token", lambda identity, d: dirs.append(d) or "t")
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    cfg = proj / "factory.yaml"
+    cfg.write_text("workflow:\n  start: only\n  steps:\n    only: {kind: agent, role: planner, skill: s, output: {artifacts: [doc]}, next: done}\ncli: {identity: me}\nauth: {issuer: http://127.0.0.1:8766, audience: taktloop}\n")
+    monkeypatch.delenv("TAKTLOOP_TOKEN")
+    monkeypatch.chdir(tmp_path)
+    assert cli.main(["--config", str(cfg), "steps"]) == 0 and seen["token"] == "t"
+    assert cli.main(["token", "me", "--config", str(cfg)]) == 0
+    assert dirs == [proj / ".taktloop/credentials"] * 2
+    assert cli.main(["token", "me", "--credentials", "elsewhere"]) == 0
+    assert dirs[-1] == Path("elsewhere")

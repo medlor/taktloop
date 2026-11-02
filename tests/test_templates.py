@@ -39,7 +39,7 @@ def _frontmatter(text: str) -> tuple[str, str]:
 
 def test_bridge_skill_m2():
     text = SKILL.read_text()
-    for word in ("TAKTLOOP_TOKEN", "feedback", ".mcp.json", "findings", "401"):
+    for word in ("TAKTLOOP_TOKEN", "feedback", ".mcp.json", "findings", "401", "taktloop override", "--to plan"):
         assert word in text, word
     assert "rejection_reason" not in text
 

@@ -163,8 +163,9 @@ def _issuer(ns) -> int:
     try:
         cfg = load_issuer_config(ns.config)
         if ns.sub == "init":
-            written = init_state(cfg, ns.credentials, ns.rotate)
-            print("\n".join(f"{i}: {ns.credentials / (i + '.json')}" for i in written) or "nothing to do")
+            creds = ns.credentials or ns.config.parent / ".taktloop/credentials"
+            written = init_state(cfg, creds, ns.rotate)
+            print("\n".join(f"{i}: {creds / (i + '.json')}" for i in written) or "nothing to do")
             return 0
         app = build_app(cfg)
     except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError) as e:
@@ -179,7 +180,7 @@ def _issuer(ns) -> int:
 
 def _token(ns) -> int:
     try:
-        print(fetch_token(ns.identity, ns.credentials))
+        print(fetch_token(ns.identity, ns.credentials or ns.config.parent / ".taktloop/credentials"))
     except TokenError as e:
         print(f"taktloop: {e}", file=sys.stderr)
         return 2
@@ -193,7 +194,7 @@ def _bearer(ns, cfg) -> str:
     identity = ns.identity or (cfg.cli_identity if cfg else None)
     if not identity:
         raise TokenError("no identity: set TAKTLOOP_TOKEN, pass --as, or set cli.identity in factory.yaml")
-    return fetch_token(identity)
+    return fetch_token(identity, cfg.credentials if cfg else Path(".taktloop/credentials"))
 
 
 def run_client(ns, cfg) -> int:

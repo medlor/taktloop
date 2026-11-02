@@ -1,5 +1,6 @@
 import pytest
-from test_service_steps import SHA, clock, store, svc  # noqa: F401
+
+from conftest import SHA
 
 from taktloop.models import ArtifactIn
 from taktloop.permissions import require

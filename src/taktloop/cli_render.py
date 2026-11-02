@@ -21,6 +21,8 @@ def _event_detail(e: dict) -> str:
     d = e["detail"]
     if e["operation"] == "decide_gate":
         return ": ".join(x for x in (d.get("decision"), d.get("reason")) if x)
+    if e["operation"] == "escalate":
+        return f"{d['review_step']} failed {d['issue_rounds']} times → {d['gate']}"
     if e["operation"] == "override_review":
         return f"override: {d.get('reason')}"
     if e["operation"] == "release_step":

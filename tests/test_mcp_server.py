@@ -3,8 +3,7 @@ import re
 import pytest
 from mcp import Client, Implementation
 
-from conftest import ALL_ROLES, as_identity
-from test_service_steps import MVP, Clock  # noqa: F401
+from conftest import ALL_ROLES, MVP, Clock, as_identity
 from mcp.server.auth.middleware.auth_context import auth_context_var as mcp_auth_context
 
 from taktloop import mcp_server

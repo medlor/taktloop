@@ -21,6 +21,7 @@ class FactoryConfig:
     auth_audience: str
     cli_identity: str | None = None
     separation: Literal["off", "strict"] = "off"
+    credentials: Path = Path(".taktloop/credentials")  # next to factory.yaml, like the database
 
     @property
     def url(self) -> str:
@@ -51,4 +52,5 @@ def load_config(path: Path) -> FactoryConfig:
         auth_audience=str(auth["audience"]),
         cli_identity=(data.get("cli") or {}).get("identity"),
         separation=separation,
+        credentials=path.parent / ".taktloop/credentials",
     )

@@ -114,16 +114,22 @@ async def test_rs256_issuer_is_accepted(issuer, verifier):
     assert await verifier.verify_token(issuer.token(key=rsa_key, kid="r1", algorithm="RS512")) is None
 
 
-async def test_symmetric_and_none_keys_are_refused(issuer, verifier, caplog):
+async def test_symmetric_keys_are_refused(issuer, verifier, caplog):
     secret = "s" * 32
     issuer.keys = [{"kty": "oct", "k": jwt.utils.base64url_encode(secret.encode()).decode(), "kid": "h1",
                     "alg": "HS256"}]
     with caplog.at_level(logging.WARNING, logger="taktloop.auth"):
         assert await verifier.verify_token(issuer.token(key=secret, kid="h1", algorithm="HS256")) is None
     assert "symmetric" in caplog.text
+
+
+async def test_unsigned_token_for_a_known_key_is_refused(issuer, verifier, caplog):
+    """kid k1 is the issuer's real ES256 key, so the refusal is the `none` algorithm itself."""
     unsigned = jwt.encode({"iss": ISSUER, "sub": "x", "aud": "taktloop", "exp": int(time.time()) + 60},
                           None, algorithm="none", headers={"kid": "k1"})
-    assert await verifier.verify_token(unsigned) is None
+    with caplog.at_level(logging.WARNING, logger="taktloop.auth"):
+        assert await verifier.verify_token(unsigned) is None
+    assert "unknown key id" not in caplog.text and "alg" in caplog.text.lower()
 
 
 @pytest.mark.parametrize("configured,claimed", [(ISSUER + "/", ISSUER), (ISSUER, ISSUER + "/")])

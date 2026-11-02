@@ -61,7 +61,11 @@ class StepOps(ServiceBase):
             else:
                 target = step.on_pass if outcome == "pass" else step.next
             detail["next"] = target
-            self._advance(tx, run.task_id, target)
+            opened = self._advance(tx, run.task_id, target)
+            if outcome == "issues" and target == step.on_escalate:
+                ids.core_events.append(("escalate", opened, {
+                    "review_step": step.name, "gate": target,
+                    "issue_rounds": step.max_issue_rounds}))
             return self._summary(tx, tx.get_task(run.task_id))
         detail = {"step_id": step_id, "outcome": outcome,
                   "artifacts": [a.model_dump() for a in artifacts],

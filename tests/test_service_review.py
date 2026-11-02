@@ -5,7 +5,7 @@ import pytest
 from taktloop.config import load_config
 from taktloop.models import ArtifactIn
 from taktloop.service import Caller, Rejected, Service
-from test_service_steps import ME, SHA, clock, store  # noqa: F401
+from conftest import ME, SHA
 
 ROOT = Path(__file__).resolve().parent.parent
 SHA2, SHA3 = "b" * 40, "c" * 40
@@ -98,6 +98,12 @@ def test_issues_reopen_plan_with_findings_then_escalate(svc, store):
     verdicts = [e for e in svc.get_task(ME, tid).history
                 if e.operation == "complete_step" and e.step == "plan_review"]
     assert [e.detail["next"] for e in verdicts] == ["plan", "plan_escalation"]
+    hist = svc.get_task(ME, tid).history
+    esc = [e for e in hist if e.operation == "escalate"]
+    assert len(esc) == 1 and hist[-1] is esc[0]  # recorded right after the verdict
+    assert (esc[0].subject, esc[0].roles, esc[0].step, esc[0].detail) == (
+        "core", [], "plan_escalation",
+        {"review_step": "plan_review", "gate": "plan_escalation", "issue_rounds": 2})
 
 
 def test_issue_count_restarts_after_escalation_gate(svc):

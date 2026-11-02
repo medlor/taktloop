@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -38,6 +38,8 @@ class _Ids:
     """Task/step-run the current operation touched, for its history event."""
     task_id: int | None = None
     step_run_id: int | None = None
+    core_events: list[tuple[str, int | None, dict]] = field(default_factory=list)
+    """What the core did as a consequence (operation, step run, detail), recorded after."""
 
 
 def _utc_now() -> datetime:
@@ -74,6 +76,8 @@ class ServiceBase:
                 result = body(tx, ids)
                 if writes:
                     self._event(tx, caller, operation, ids, detail)
+                for op, run_id, d in ids.core_events:
+                    self._event(tx, CORE, op, _Ids(ids.task_id, run_id), d)
                 return result
         except Rejected as r:
             with self._store.transaction() as tx:
@@ -137,12 +141,12 @@ class ServiceBase:
         last = tx.last_step_run(task_id, step)
         return tx.insert_step_run(task_id, step, (last.round if last else 0) + 1, self._clock())
 
-    def _advance(self, tx: Tx, task_id: int, target: str) -> None:
-        """Open `target` as the task's next run, or finish the task."""
+    def _advance(self, tx: Tx, task_id: int, target: str) -> int | None:
+        """Open `target` as the task's next run (its id), or finish the task."""
         if target == DONE:
             tx.set_task_status(task_id, "done")
-        else:
-            self._open_step(tx, task_id, target)
+            return None
+        return self._open_step(tx, task_id, target)
 
     def _artifacts(self, tx: Tx, task_id: int) -> list[Artifact]:
         out = []

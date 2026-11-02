@@ -92,7 +92,16 @@ approval is the core's gate, not the chat. After completing, tell the user:
     uv run taktloop approve <task_id>
     uv run taktloop reject <task_id> --reason "..."
 
-They can do this at any time, from anywhere. Do not call `decide_gate` or
+When a review verdict escalates the task (it then waits at an escalation gate
+such as `plan_escalation`), tell the user the approver's options there:
+
+    uv run taktloop approve <task_id>                       # approve the latest plan anyway
+    uv run taktloop override <task_id> --reason "..."      # same result, recorded as an override
+    uv run taktloop reject <task_id> --to plan --reason "..."    # or --to design
+
+An approver can also `override` a plan review at any earlier point (while the
+review is open or claimed, or during a revision round). They can do all of
+this at any time, from anywhere. Do not call `decide_gate` or
 `override_review` yourself.
 
 ## Long sessions and failure

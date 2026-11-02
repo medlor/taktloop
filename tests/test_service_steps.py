@@ -1,74 +1,13 @@
 import threading
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
 import pytest
-import yaml
 
-from conftest import ALL_ROLES
+from conftest import ALL_ROLES, ME, MVP, SHA
 from taktloop.models import ArtifactIn
 from taktloop.service import Caller, Rejected, Service
 from taktloop.store import Store
 from taktloop.workflow import parse_workflow
-
-MVP = yaml.safe_load(
-    """
-start: design
-steps:
-  design:
-    kind: agent
-    role: planner
-    skill: brainstorming
-    instructions: >
-      Run brainstorming with the requester until the design doc is written
-      and the requester is happy with it. Do not invoke writing-plans.
-    output:
-      artifacts: [design_doc]
-    next: design_approval
-  design_approval:
-    kind: human_gate
-    role: approver
-    on_approve: plan
-    on_reject: design
-  plan:
-    kind: agent
-    role: planner
-    skill: writing-plans
-    instructions: >
-      Write the plan from the approved design doc. Do not ask for an
-      execution mode and do not start executing.
-    output:
-      artifacts: [plan]
-    next: done
-"""
-)
-ME = Caller("local", frozenset(ALL_ROLES), "claude-code")
-SHA = "a" * 40
-
-
-class Clock:
-    def __init__(self):
-        self.now = datetime(2026, 11, 1, 14, 0, tzinfo=timezone.utc)
-
-    def __call__(self):
-        return self.now
-
-
-@pytest.fixture
-def clock():
-    return Clock()
-
-
-@pytest.fixture
-def store():
-    s = Store(":memory:")
-    yield s
-    s.close()
-
-
-@pytest.fixture
-def svc(store, clock):
-    return Service(store, parse_workflow(MVP), clock=clock)
-
 
 def art(path="docs/d.md", commit=SHA, branch="main"):
     return ArtifactIn(name="design_doc", path=path, commit=commit, branch=branch)

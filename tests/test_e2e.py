@@ -76,6 +76,7 @@ class Core:
             self.proc = subprocess.Popen(
                 ["uv", "run", "taktloop", "--config", self.cfg, "serve"],
                 cwd=ROOT, stdout=out, stderr=err, start_new_session=True,
+                env={k: v for k, v in os.environ.items() if k != "TAKTLOOP_TOKEN"},
             )
         deadline = time.monotonic() + 20
         while time.monotonic() < deadline:

@@ -51,8 +51,9 @@ def _free_port() -> int:
 
 
 def _start(args: list[str], log: Path, ready) -> subprocess.Popen:
+    env = {k: v for k, v in os.environ.items() if k != "TAKTLOOP_TOKEN"}  # servers hold no token
     with open(log, "w") as out:
-        proc = subprocess.Popen(["uv", "run", "taktloop", *args], cwd=ROOT, stdout=out,
+        proc = subprocess.Popen(["uv", "run", "taktloop", *args], cwd=ROOT, stdout=out, env=env,
                                 stderr=subprocess.STDOUT, start_new_session=True)
     deadline = time.monotonic() + 20
     while time.monotonic() < deadline:
@@ -81,7 +82,7 @@ def _answers(url: str) -> bool:
 
 
 @pytest.fixture
-def factory(tmp_path, monkeypatch):
+def factory(tmp_path, monkeypatch, request):
     """Issuer and core subprocesses; yields (core URL, credentials dir)."""
     issuer = f"http://127.0.0.1:{_free_port()}"
     issuer_cfg = tmp_path / "dev-issuer.yaml"
@@ -93,6 +94,7 @@ def factory(tmp_path, monkeypatch):
     assert sorted(p.name for p in creds.iterdir()) == ["agent-a.json", "agent-b.json", "tobias.json"]
     issuer_proc = _start(["issuer", "--config", str(issuer_cfg)], tmp_path / "issuer.log",
                          lambda: _answers(f"{issuer}/jwks.json"))
+    request.addfinalizer(lambda: _stop(issuer_proc))  # also when the core fails to start
 
     port = _free_port()
     workflow = (ROOT / "templates/mvp/factory.yaml").read_text()
@@ -105,7 +107,6 @@ def factory(tmp_path, monkeypatch):
                        lambda: main(["--url", url, "task", "list"]) == 0)
     yield url, creds
     _stop(core_proc)
-    _stop(issuer_proc)
 
 
 class Session:
@@ -199,8 +200,8 @@ def test_m2_demo(factory, capsys):
     assert task["status"] == "done"
     assert [a["commit"][0] for a in task["artifacts"] if a["name"] == "plan"][-1] == "c"
     history = task["history"]
-    for e in history:
-        assert e["subject"] and e["roles"], e
+    for e in history:  # every identity's call carries its roles; the core's own events have none
+        assert e["subject"] and (e["roles"] or (e["subject"], e["operation"]) == ("core", "escalate")), e
     assert history[0]["operation"] == "create_task" and history[0]["subject"] == "tobias"
 
     agent_roles = ["planner", "reviewer"]
@@ -213,7 +214,10 @@ def test_m2_demo(factory, capsys):
     verdicts = [e for e in history if e["operation"] == "complete_step" and e["step"] == "plan_review"]
     assert [(e["subject"], e["roles"], e["executor"], e["detail"]["outcome"]) for e in verdicts] == [
         ("agent-b", agent_roles, "claude-code", "issues")] * 2
-    assert [e["detail"]["next"] for e in verdicts] == ["plan", "plan_escalation"]  # the escalation
+    assert [e["detail"]["next"] for e in verdicts] == ["plan", "plan_escalation"]
+    (esc,) = [e for e in history if e["operation"] == "escalate"]
+    assert history.index(esc) == history.index(verdicts[1]) + 1
+    assert (esc["subject"], esc["step"], esc["detail"]["issue_rounds"]) == ("core", "plan_escalation", 2)
 
     (override,) = [e for e in history if e["operation"] == "override_review"]
     assert (override["subject"], override["roles"], override["executor"], override["step"],
@@ -230,3 +234,4 @@ def test_m2_demo(factory, capsys):
     assert "agent-b (claude-code)" in shown and "tobias (taktloop-cli)" in shown
     assert "override: Good enough" in shown
     assert "issues → plan" in shown and "issues → plan_escalation" in shown
+    assert "plan_review failed 2 times → plan_escalation" in shown

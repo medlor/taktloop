@@ -13,6 +13,7 @@ caller's roles on every operation.
 ```sh
 uv sync                                  # install dependencies
 uv run taktloop issuer init              # signing key + .taktloop/credentials/<identity>.json for each identity
+claude mcp remove taktloop -s local      # only if you registered the core for M1 (see below)
 uv run taktloop install-skill            # copy both skills to .claude/skills/ (taktloop, taktloop-plan-review)
 ```
 
@@ -30,11 +31,24 @@ the token from `TAKTLOOP_TOKEN`. Start every agent session as one identity:
 TAKTLOOP_TOKEN=$(uv run taktloop token agent-a) claude
 ```
 
-Tokens last 12 hours. When a session's calls fail with 401, the token is
-missing or expired: restart the session the same way to get a fresh one.
+On first start Claude Code asks whether to use the project's `.mcp.json`
+server; accept it. Tokens last 12 hours. When a session's calls fail with 401,
+the token is missing or expired: restart the session the same way to get a
+fresh one.
+
+If `/mcp` shows taktloop as **needs authentication** (or "SDK auth failed ...
+authorization_endpoint"), Claude Code connected without the token and fell
+back to browser OAuth, which the dev issuer doesn't offer. Check, in this
+order: an older registration without the header shadows `.mcp.json`
+(`claude mcp get taktloop` shows its config location; remove it with
+`claude mcp remove taktloop -s local`); `TAKTLOOP_TOKEN` was empty (the
+`taktloop token` command failed); the token expired.
 
 The CLI is a client too. It uses `TAKTLOOP_TOKEN` if set, otherwise
 `--as <identity>`, otherwise `cli.identity` from `factory.yaml` (`tobias`).
+Credentials are read from `.taktloop/credentials/` next to `factory.yaml`
+(next to `dev-issuer.yaml` for `issuer init`), whatever the current
+directory; `--credentials DIR` overrides it.
 
 ### The demo
 
@@ -57,7 +71,9 @@ uv run taktloop task create "Add a --version flag to the CLI"   # as tobias; tas
    `uv run taktloop override 1 --reason "..."` approves the latest plan;
    `uv run taktloop reject 1 --to plan --reason "..."` sends it back.
 6. `uv run taktloop task show 1` lists every event with identity, roles and
-   executor, for example `agent-b (claude-code)`.
+   executor, for example `agent-b (claude-code)`: the refused claim, both
+   verdicts (`issues → plan`, `issues → plan_escalation`), the core's own
+   `escalate` event and the override.
 
 A call without a token is refused: `curl -i -X POST http://127.0.0.1:8765/mcp`
 answers `401 Unauthorized`.
@@ -93,9 +109,10 @@ Start them the same way, for example `TAKTLOOP_TOKEN=$(uv run taktloop token age
 - **M1 database:** an M1 `.taktloop/factory.db` is refused at start (the
   schema changed and there are no migrations). Delete `.taktloop/factory.db`
   and start the core again.
-- The M1 registration `claude mcp add ... taktloop` is no longer needed; if
-  you added it, remove it with `claude mcp remove taktloop` so it doesn't
-  shadow `.mcp.json`.
+- The M1 registration `claude mcp add ... taktloop` is no longer needed and
+  must go: it has no `Authorization` header and, registered with local scope,
+  it takes precedence over `.mcp.json`. Remove it with
+  `claude mcp remove taktloop -s local`.
 - **Known limit (accepted for M2):** all credentials files, including
   `tobias`'s, sit in the repo's `.taktloop/credentials/`. An agent session has
   a shell, so it could run `taktloop token tobias` and act as the approver,

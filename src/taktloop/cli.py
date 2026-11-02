@@ -64,10 +64,11 @@ def _parser() -> argparse.ArgumentParser:
     iss_init = iss.add_subparsers(dest="sub").add_parser("init", help="create the signing key and credentials")
     iss_init.add_argument("--config", type=Path, default=argparse.SUPPRESS)
     iss_init.add_argument("--rotate", metavar="ID", help="issue a new secret for one identity")
-    iss_init.add_argument("--credentials", type=Path, default=Path(".taktloop/credentials"))
+    iss_init.add_argument("--credentials", type=Path, help="default: .taktloop/credentials next to the config")
     t = sub.add_parser("token", help="print a dev-issuer token for an identity")
     t.add_argument("identity")
-    t.add_argument("--credentials", type=Path, default=Path(".taktloop/credentials"))
+    t.add_argument("--config", type=Path, default=argparse.SUPPRESS, help="factory.yaml; locates the credentials")
+    t.add_argument("--credentials", type=Path, help="default: .taktloop/credentials next to the config")
     s = sub.add_parser("install-skill", parents=[shared], help="copy the taktloop skills into a project")
     s.add_argument("--dest", type=Path, default=Path(".claude/skills"))
     return p

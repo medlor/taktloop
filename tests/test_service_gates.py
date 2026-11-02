@@ -4,7 +4,7 @@ import pytest
 
 from taktloop.models import ArtifactIn
 from taktloop.service import Rejected
-from test_service_steps import ME, SHA, clock, store, svc  # noqa: F401
+from conftest import ME, SHA
 
 SHA2 = "b" * 40
 

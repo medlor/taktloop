@@ -2,9 +2,11 @@ import socket
 import threading
 import time
 from contextlib import contextmanager
+from datetime import datetime, timezone
 
 import pytest
 import uvicorn
+import yaml
 from mcp.server.auth.middleware.auth_context import auth_context_var
 from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
 from mcp.server.auth.provider import AccessToken
@@ -12,9 +14,74 @@ from mcp.server.auth.provider import AccessToken
 from taktloop.issuer.app import build_app
 from taktloop.issuer.config import load_issuer_config
 from taktloop.issuer.state import init_state
+from taktloop.service import Caller, Service
+from taktloop.store import Store
+from taktloop.workflow import parse_workflow
 
 
 ALL_ROLES = ("requester", "planner", "reviewer", "approver", "factory_owner")
+
+
+# --- service fixtures shared by the service, permission and separation tests ---
+
+MVP = yaml.safe_load(
+    """
+start: design
+steps:
+  design:
+    kind: agent
+    role: planner
+    skill: brainstorming
+    instructions: >
+      Run brainstorming with the requester until the design doc is written
+      and the requester is happy with it. Do not invoke writing-plans.
+    output:
+      artifacts: [design_doc]
+    next: design_approval
+  design_approval:
+    kind: human_gate
+    role: approver
+    on_approve: plan
+    on_reject: design
+  plan:
+    kind: agent
+    role: planner
+    skill: writing-plans
+    instructions: >
+      Write the plan from the approved design doc. Do not ask for an
+      execution mode and do not start executing.
+    output:
+      artifacts: [plan]
+    next: done
+"""
+)
+ME = Caller("local", frozenset(ALL_ROLES), "claude-code")
+SHA = "a" * 40
+
+
+class Clock:
+    def __init__(self):
+        self.now = datetime(2026, 11, 1, 14, 0, tzinfo=timezone.utc)
+
+    def __call__(self):
+        return self.now
+
+
+@pytest.fixture
+def clock():
+    return Clock()
+
+
+@pytest.fixture
+def store():
+    s = Store(":memory:")
+    yield s
+    s.close()
+
+
+@pytest.fixture
+def svc(store, clock):
+    return Service(store, parse_workflow(MVP), clock=clock)
 
 
 @pytest.fixture(autouse=True)
