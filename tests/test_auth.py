@@ -3,7 +3,7 @@ import time
 
 import jwt
 import pytest
-from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric import ec, rsa
 
 from taktloop.auth import JwtVerifier, roles_from_scopes
 
@@ -35,11 +35,11 @@ class Issuer:
         self.fetches.append(url)
         return {META: {"issuer": ISSUER, "jwks_uri": JWKS}, JWKS: {"keys": list(self.keys)}}[url]
 
-    def token(self, key=None, kid="k1", **over):
+    def token(self, key=None, kid="k1", algorithm="ES256", **over):
         now = int(time.time())
         claims = {"iss": ISSUER, "sub": "agent-a", "aud": "taktloop", "iat": now, "exp": now + 60,
                   "scope": "taktloop:taktloop:planner openid", "client_id": "agent-a"} | over
-        return jwt.encode(claims, key or self.key, algorithm="ES256", headers={"kid": kid})
+        return jwt.encode(claims, key or self.key, algorithm=algorithm, headers={"kid": kid})
 
 
 @pytest.fixture
@@ -103,3 +103,41 @@ async def test_unknown_kid_refetches_once(issuer, verifier):
     assert issuer.fetches == [META, JWKS, JWKS]
     assert await verifier.verify_token(issuer.token(kid="k3")) is None
     assert issuer.fetches == [META, JWKS, JWKS, JWKS]
+
+
+async def test_rs256_issuer_is_accepted(issuer, verifier):
+    """Spec 5.1: any OIDC/OAuth issuer works; Okta and Keycloak sign RS256 by default."""
+    rsa_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    issuer.keys = [jwt.algorithms.RSAAlgorithm.to_jwk(rsa_key.public_key(), as_dict=True) | {"kid": "r1"}]
+    tok = issuer.token(key=rsa_key, kid="r1", algorithm="RS256")
+    assert (await verifier.verify_token(tok)).subject == "agent-a"
+    assert await verifier.verify_token(issuer.token(key=rsa_key, kid="r1", algorithm="RS512")) is None
+
+
+async def test_symmetric_and_none_keys_are_refused(issuer, verifier, caplog):
+    secret = "s" * 32
+    issuer.keys = [{"kty": "oct", "k": jwt.utils.base64url_encode(secret.encode()).decode(), "kid": "h1",
+                    "alg": "HS256"}]
+    with caplog.at_level(logging.WARNING, logger="taktloop.auth"):
+        assert await verifier.verify_token(issuer.token(key=secret, kid="h1", algorithm="HS256")) is None
+    assert "symmetric" in caplog.text
+    unsigned = jwt.encode({"iss": ISSUER, "sub": "x", "aud": "taktloop", "exp": int(time.time()) + 60},
+                          None, algorithm="none", headers={"kid": "k1"})
+    assert await verifier.verify_token(unsigned) is None
+
+
+@pytest.mark.parametrize("configured,claimed", [(ISSUER + "/", ISSUER), (ISSUER, ISSUER + "/")])
+async def test_trailing_slash_in_issuer_is_ignored(issuer, configured, claimed):
+    v = JwtVerifier(configured, "taktloop", fetch_json=issuer.fetch_json)
+    assert await v.verify_token(issuer.token(iss=claimed)) is not None
+
+
+async def test_falls_back_to_openid_configuration(issuer):
+    oidc = f"{ISSUER}/.well-known/openid-configuration"
+
+    def fetch(url):
+        if url == META:
+            raise OSError("404")
+        return issuer.fetch_json(META if url == oidc else url)
+
+    assert await JwtVerifier(ISSUER, "taktloop", fetch_json=fetch).verify_token(issuer.token()) is not None

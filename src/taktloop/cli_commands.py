@@ -119,6 +119,8 @@ def _request(ns) -> tuple[str, dict, object]:
 async def _review(url: str, ns, token: str) -> dict:
     """`taktloop review`: claim the task's current review step and complete it with the verdict."""
     task = await _call_tool(url, "get_task", {"task_id": ns.task}, token)
+    if task["current_step"] is None:
+        raise ToolRejected(f"task {ns.task} has no open step ({task['status']})")
     ctx = task["step_id"] and await _call_tool(url, "get_step_context", {"step_id": task["step_id"]}, token)
     if not (ctx and ctx.get("review_of")):
         raise ToolRejected(f"task {ns.task} is at {task['current_step']}, not at a review step")

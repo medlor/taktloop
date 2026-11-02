@@ -59,11 +59,15 @@ uv run taktloop task create "Add a --version flag to the CLI"   # as tobias; tas
 6. `uv run taktloop task show 1` lists every event with identity, roles and
    executor, for example `agent-b (claude-code)`.
 
-`tobias` holds the reviewer role, so he can also pass a verdict from the CLI:
-`uv run taktloop review 1 --pass` or `--issues "..."`.
+A call without a token is refused: `curl -i -X POST http://127.0.0.1:8765/mcp`
+answers `401 Unauthorized`.
 
-With `separation: off` (the default) one identity may plan, review its own
-plan and revise it; role checks still apply.
+Now set `separation: off` (the default) and restart the core. One identity
+may plan, review its own plan and revise it; role checks still apply.
+Create task 2 and run its design and plan as `agent-a` as above; a session as
+`agent-a` may now claim its `plan_review`. `tobias` holds the reviewer role,
+so he can also pass the verdict from the CLI: `uv run taktloop review 2 --pass`
+or `--issues "..."`.
 
 ### Other harnesses
 

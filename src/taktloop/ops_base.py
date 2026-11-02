@@ -82,12 +82,14 @@ class ServiceBase:
 
     def _separate(self, tx: Tx, task_id: int,
                   rule: Callable[[list[Record]], str | None]) -> None:
-        """In strict mode, refuse with the rule's text if it objects to the task's records."""
+        """In strict mode, refuse with the rule's text if it objects to the task's records.
+        Runs an override closed as superseded were never completed and do not count."""
         if self._separation != "strict":
             return
         refusal = rule([Record(r.step, r.round, r.claimed_by, task_id)
                         for r in tx.list_step_runs(task_id)
-                        if r.status == "completed" and r.claimed_by])
+                        if r.status == "completed" and r.outcome != "superseded"
+                        and r.claimed_by])
         if refusal:
             raise Rejected(refusal)
 

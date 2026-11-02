@@ -276,7 +276,8 @@ def _fake_core(monkeypatch, step="plan_review", review_of="plan"):
     async def fake(url, name, args, token):
         seen.append((name, args))
         return {
-            "get_task": {"id": 3, "step_id": 7, "current_step": step},
+            "get_task": {"id": 3, "step_id": step and 7, "current_step": step,
+                         "status": "active" if step else "done"},
             "get_step_context": {"step_id": 7, "review_of": review_of},
             "claim_step": {"step_id": 7, "claim_token": "tok"},
         }.get(name, {"id": 3, "title": "T", "status": "active", "waiting_for": "x"})
@@ -304,6 +305,13 @@ def test_review_needs_a_review_step(monkeypatch, capsys):
     assert cli.main(["--url", "http://x/mcp", "review", "3", "--pass"]) == 1
     assert capsys.readouterr().err == "rejected: task 3 is at plan, not at a review step\n"
     assert "claim_step" not in [n for n, _ in seen]
+
+
+def test_review_of_a_done_task(monkeypatch, capsys):
+    seen = _fake_core(monkeypatch, step=None, review_of=None)
+    assert cli.main(["--url", "http://x/mcp", "review", "3", "--pass"]) == 1
+    assert capsys.readouterr().err == "rejected: task 3 has no open step (done)\n"
+    assert [n for n, _ in seen] == ["get_task"]
 
 
 def test_review_needs_pass_or_issues(capsys):

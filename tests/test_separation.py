@@ -1,10 +1,12 @@
 import pytest
+import yaml
 
 from conftest import ALL_ROLES
 from taktloop.config import load_config
 from taktloop.models import ArtifactIn
 from taktloop.separation import Record, approved_step, check_approval, check_claim
 from taktloop.service import Caller, Rejected, Service
+from taktloop.workflow import parse_workflow
 from test_service_review import ROOT
 from test_service_steps import SHA, clock, store  # noqa: F401
 
@@ -115,3 +117,18 @@ def test_off_allows_one_identity_to_do_everything(off):
     assert do(off, A, tid, "pass").status == "done"
     tid = to_plan_review(off, planner=A, designer=A, approver=A)
     assert off.override_review(A, tid, "plan_review", "fine").status == "done"
+
+
+def test_superseded_run_is_not_a_completion(store, clock):
+    """A plan round cut short by an override was never completed: its claimer may still approve."""
+    raw = yaml.safe_load((ROOT / "factory.yaml").read_text())["workflow"]
+    raw["steps"]["plan_review"]["on_pass"] = "release"
+    raw["steps"]["release"] = {"kind": "human_gate", "role": "approver", "on_approve": "done",
+                               "on_reject": "plan"}
+    svc = Service(store, parse_workflow(raw), clock=clock, separation="strict")
+    tid = to_plan_review(svc, planner=T, designer=T, approver=B)
+    do(svc, B, tid, "issues", findings="vague")
+    svc.claim_step(A, step_id(svc, tid))  # plan round 2, cut short by the override
+    svc.override_review(B, tid, "plan_review", "round 1 is fine")
+    assert svc.get_task(T, tid).current_step == "release"
+    assert svc.decide_gate(A, tid, None, "approve").status == "done"
