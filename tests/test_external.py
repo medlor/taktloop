@@ -12,8 +12,8 @@ ARGS = {"method": "get_workflow_run", "owner": "o", "repo": "r", "resource_id": 
 
 def test_read_dotenv_formats(tmp_path: Path):
     f = tmp_path / ".env"
-    f.write_text("# c\n\nA=1\nexport B=\"two\"\nC='3'\nD=x=y\n")
-    assert read_dotenv(f) == {"A": "1", "B": "two", "C": "3", "D": "x=y"}
+    f.write_text("# c\n\nA=1\nexport B=\"two\"\nC='3'\nD=x=y\nE = pad  \nF=  'q'  \n")
+    assert read_dotenv(f) == {"A": "1", "B": "two", "C": "3", "D": "x=y", "E": "pad", "F": "q"}
     assert read_dotenv(tmp_path / "missing") == {}
 
 
@@ -45,9 +45,12 @@ def test_external_tool_error_and_unreachable(fake_github):
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         closed = s.getsockname()[1]
-    with pytest.raises(CheckUnavailable, match="github is unreachable") as e:
+    with pytest.raises(CheckUnavailable, match="github is unreachable: ConnectError") as e:
         _checker(f"http://127.0.0.1:{closed}/mcp")("github", "actions_get", ARGS)
     assert "s3cret" not in str(e.value)
+    with pytest.raises(CheckUnavailable) as e:
+        _checker(url, environ={"TAKTLOOP_GITHUB_TOKEN": "bad-token"})("github", "actions_get", ARGS)
+    assert str(e.value) == "github answered 401"
     with pytest.raises(CheckUnavailable) as e:
         _checker(url, environ={})("github", "actions_get", ARGS)
     assert str(e.value) == "the core has no credential for github (TAKTLOOP_GITHUB_TOKEN is not set)"

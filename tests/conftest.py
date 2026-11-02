@@ -164,6 +164,9 @@ def fake_github(github_runs):
     class Spy(BaseHTTPMiddleware):
         async def dispatch(self, request, call_next):
             seen.append(request.headers.get("authorization", ""))
+            if seen[-1] == "Bearer bad-token":
+                from starlette.responses import JSONResponse
+                return JSONResponse({"message": "Bad credentials"}, status_code=401)
             return await call_next(request)
 
     app = mcp_server.streamable_http_app()
