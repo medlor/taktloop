@@ -16,6 +16,7 @@ class FactoryConfig:
     database: Path
     workflow: Workflow
     lease_minutes: int
+    cli_identity: str | None = None
 
     @property
     def url(self) -> str:
@@ -35,4 +36,5 @@ def load_config(path: Path) -> FactoryConfig:
         database=path.parent / data.get("database", ".taktloop/factory.db"),
         workflow=parse_workflow(data["workflow"]),
         lease_minutes=int(data.get("lease_minutes", 30)),
+        cli_identity=(data.get("cli") or {}).get("identity"),
     )

@@ -2,7 +2,7 @@ from importlib.metadata import version
 
 import pytest
 
-from taktloop import cli
+from taktloop import cli, cli_commands
 
 SHA = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
 
@@ -19,7 +19,7 @@ DETAIL = {
 
 
 def test_render_task_detail_lines():
-    out = cli.render_task_detail(DETAIL)
+    out = cli_commands.render_task_detail(DETAIL)
     assert "#1 Add a --version flag [active]" in out
     assert "step: design_approval  (step id 2)" in out
     assert "waiting for: waiting for approver decision at design_approval" in out
@@ -29,14 +29,14 @@ def test_render_task_detail_lines():
 
 
 def test_render_task_list_and_steps_empty():
-    assert cli.render_task_list({"tasks": []}) == "no tasks"
-    assert cli.render_steps({"steps": []}) == "no open steps"
+    assert cli_commands.render_task_list({"tasks": []}) == "no tasks"
+    assert cli_commands.render_steps({"steps": []}) == "no open steps"
 
 
 def test_render_steps_line():
     d = {"steps": [{"step_id": 3, "task_id": 1, "task_title": "T", "step": "design",
                     "skill": "brainstorming", "round": 1}]}  # fmt: skip
-    assert cli.render_steps(d) == "step 3  task #1 T  design (round 1, skill brainstorming)"
+    assert cli_commands.render_steps(d) == "step 3  task #1 T  design (round 1, skill brainstorming)"
 
 
 def test_core_down_message_and_exit_code(capsys):
@@ -52,10 +52,10 @@ def test_install_skill_copies_bridge_skill(tmp_path):
 
 
 def test_rejection_exit_code(monkeypatch, capsys):
-    async def boom(url, name, args):
-        raise cli.ToolRejected("x")
+    async def boom(url, name, args, token):
+        raise cli_commands.ToolRejected("x")
 
-    monkeypatch.setattr(cli, "_call_tool", boom)
+    monkeypatch.setattr(cli_commands, "_call_tool", boom)
     assert cli.main(["--url", "http://x/mcp", "approve", "1"]) == 1
     assert capsys.readouterr().err == "rejected: x\n"
 
@@ -67,8 +67,8 @@ def test_missing_config_is_one_line(tmp_path, capsys):
 
 
 def test_reason_strips_sdk_prefix_only_when_present():
-    assert cli._reason("Error executing tool decide_gate: task 1 is not at a gate") == "task 1 is not at a gate"
-    assert cli._reason("task 1 is not at a gate") == "task 1 is not at a gate"
+    assert cli_commands._reason("Error executing tool decide_gate: task 1 is not at a gate") == "task 1 is not at a gate"
+    assert cli_commands._reason("task 1 is not at a gate") == "task 1 is not at a gate"
 
 
 @pytest.mark.parametrize("url", ["http://127.0.0.1:99999/mcp", "http://127.0.0.1:abc/mcp", "ftp://h/mcp", "http:///mcp"])
@@ -78,10 +78,10 @@ def test_invalid_url_is_one_line(url, capsys):
 
 
 def test_unexpected_error_is_one_line(monkeypatch, capsys):
-    async def boom(url, name, args):
+    async def boom(url, name, args, token):
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(cli, "_call_tool", boom)
+    monkeypatch.setattr(cli_commands, "_call_tool", boom)
     assert cli.main(["--url", "http://x/mcp", "steps"]) == 2
     assert capsys.readouterr().err == "taktloop: RuntimeError: boom\n"
 
@@ -100,7 +100,7 @@ def test_render_task_detail_shows_decisions_and_artifact_rounds():
          "step": "design", "result": "ok", "reason": None,
          "detail": {"artifacts": [{"name": "design_doc"}]}},
     ]
-    out = cli.render_task_detail(d)
+    out = cli_commands.render_task_detail(d)
     assert "reject: needs flags" in out
     assert "stuck (force)" in out
     assert "design_doc" in out.splitlines()[-1]
@@ -110,11 +110,11 @@ def test_render_task_detail_shows_decisions_and_artifact_rounds():
 def test_options_accepted_after_subcommand(monkeypatch, capsys):
     seen = {}
 
-    async def fake(url, name, args):
+    async def fake(url, name, args, token):
         seen["url"] = url
         return {**DETAIL, "history": []}
 
-    monkeypatch.setattr(cli, "_call_tool", fake)
+    monkeypatch.setattr(cli_commands, "_call_tool", fake)
     assert cli.main(["task", "show", "1", "--json", "--url", "http://x/mcp"]) == 0
     assert seen["url"] == "http://x/mcp" and '"id": 1' in capsys.readouterr().out
     p = cli._parser()
@@ -147,7 +147,7 @@ def test_version_flag_not_on_subcommand(capsys):
 
 def test_render_done_task_has_no_step_line():
     d = dict(DETAIL, status="done", current_step=None, step_id=None, waiting_for="done")
-    out = cli.render_task_detail(d)
+    out = cli_commands.render_task_detail(d)
     assert "step:" not in out
     assert out.splitlines()[1] == "waiting for: done"
 
@@ -162,6 +162,72 @@ def test_rejection_reason_does_not_widen_the_result_column():
          "step": "design", "result": "rejected", "reason": "claim token does not match",
          "detail": {"artifacts": [{"name": "design_doc"}]}},
     ]
-    rows = cli.render_task_detail(d).splitlines()[-2:]
+    rows = cli_commands.render_task_detail(d).splitlines()[-2:]
     assert rows[0].endswith("design_approval  ok        approve")
     assert rows[1].endswith("design           rejected  claim token does not match (design_doc)")
+
+
+def _spy(monkeypatch):
+    seen = {}
+
+    async def fake(url, name, args, token):
+        seen["token"] = token
+        return {"steps": []}
+
+    monkeypatch.setattr(cli_commands, "_call_tool", fake)
+    monkeypatch.setattr(cli_commands, "fetch_token", lambda identity, *a: f"fetched-{identity}")
+    return seen
+
+
+def test_token_resolution_order(monkeypatch, tmp_path, capsys):
+    seen = _spy(monkeypatch)
+    cfg = tmp_path / "factory.yaml"
+    cfg.write_text("workflow:\n  start: only\n  steps:\n    only: {kind: agent, role: planner, skill: s, output: {artifacts: [doc]}, next: done}\ncli: {identity: from-config}\n")
+    monkeypatch.delenv("TAKTLOOP_TOKEN")
+    assert cli.main(["--config", str(cfg), "steps"]) == 0 and seen["token"] == "fetched-from-config"
+    assert cli.main(["--config", str(cfg), "steps", "--as", "me"]) == 0 and seen["token"] == "fetched-me"
+    monkeypatch.setenv("TAKTLOOP_TOKEN", "env")
+    assert cli.main(["--config", str(cfg), "steps", "--as", "me"]) == 0 and seen["token"] == "env"
+
+
+def test_no_identity_is_one_line(monkeypatch, capsys):
+    _spy(monkeypatch)
+    monkeypatch.delenv("TAKTLOOP_TOKEN")
+    assert cli.main(["--url", "http://x/mcp", "steps"]) == 2
+    assert capsys.readouterr().err == (
+        "taktloop: no identity: set TAKTLOOP_TOKEN, pass --as, or set cli.identity in factory.yaml\n"
+    )
+
+
+def test_core_401_is_a_clean_message(capsys):
+    """A real HTTP server answering 401, as the core does for a bad or expired token."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    class H(BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.send_response(401)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def log_message(self, *a):
+            pass
+
+    srv = HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        assert cli.main(["--url", f"http://127.0.0.1:{srv.server_port}/mcp", "steps"]) == 2
+    finally:
+        srv.shutdown()
+    assert capsys.readouterr().err == (
+        "taktloop: token missing or expired; get a new one with taktloop token <identity>\n"
+    )
+
+
+def test_token_command(real_issuer, capsys):
+    url, creds_dir = real_issuer
+    assert cli.main(["token", "agent-a", "--credentials", str(creds_dir)]) == 0
+    out = capsys.readouterr().out
+    assert out.count("\n") == 1 and out.strip().count(".") == 2
+    assert cli.main(["token", "nobody", "--credentials", str(creds_dir)]) == 2
+    assert "no credentials for nobody" in capsys.readouterr().err
