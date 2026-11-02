@@ -55,7 +55,7 @@ def factory(tmp_path, monkeypatch, request, fake_github):
     core_cfg = tmp_path / "factory.yaml"
     core_cfg.write_text(CORE_HEADER.format(port=port, db=tmp_path / "f.db", issuer=issuer) + workflow)
     url = f"http://127.0.0.1:{port}/mcp"
-    monkeypatch.setenv("TAKTLOOP_GITHUB_TOKEN", "fake")  # the core's own credential
+    monkeypatch.setenv("TAKTLOOP_GITHUB_TOKEN", "fake-gh-7f3a")  # the core's own credential
     monkeypatch.setenv("TAKTLOOP_TOKEN", fetch_token("tobias", creds))  # the CLI runs as tobias
     core_proc = _start(["--config", str(core_cfg), "serve"], tmp_path / "core.log",
                        lambda: main(["--url", url, "task", "list"]) == 0)
@@ -147,7 +147,7 @@ def test_m3a_demo(factory, github_runs, capsys):
                          evidence={"ci_run": "103"})
     assert green["current_step"] == "integration_approval"
     assert {(c["token"], c["method"], c["owner"], c["repo"]) for c in calls} == {
-        ("Bearer fake", "get_workflow_run", "medlor", "taktloop")}
+        ("Bearer fake-gh-7f3a", "get_workflow_run", "medlor", "taktloop")}
     assert [c["resource_id"] for c in calls] == ["101", "100", "102", "103"]
 
     # 7. tobias approves the integration; agent-a merges and pushes main
@@ -168,7 +168,7 @@ def test_m3a_demo(factory, github_runs, capsys):
     assert checks[-1]["detail"]["observed"] == {
         "workflow_run.head_sha": C3, "workflow_run.path": CI, "workflow_run.status": "completed",
         "workflow_run.conclusion": "success"}
-    assert "fake" not in json.dumps(task)  # the core's credential is in no event
+    assert "fake-gh-7f3a" not in json.dumps(task)  # the core's credential is in no event
     verdicts = [(e["subject"], e["step"], e["detail"].get("outcome"), e["detail"].get("next"))
                 for e in task["history"] if e["operation"] == "complete_step" and e["result"] == "ok"]
     assert verdicts[3:] == [

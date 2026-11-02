@@ -63,7 +63,7 @@ class Mismatch:
 
 def resolve(decl: CheckDecl, evidence: Mapping[str, str],
             artifacts: Mapping[str, Artifact]) -> CheckDecl:
-    def lookup(key: str) -> str:
+    def value(key: str) -> str:
         kind, _, rest = key.partition(".")
         name, _, attr = rest.partition(".")
         if kind == "evidence" and rest in evidence:
@@ -73,7 +73,7 @@ def resolve(decl: CheckDecl, evidence: Mapping[str, str],
         raise CheckUnavailable(f"cannot resolve {{{{{key}}}}}")
 
     def sub(values: Mapping[str, str]) -> dict[str, str]:
-        return {k: PLACEHOLDER.sub(lambda m: lookup(m.group(1)), v) for k, v in values.items()}
+        return {k: PLACEHOLDER.sub(lambda m: value(m.group(1)), v) for k, v in values.items()}
 
     return replace(decl, args=sub(decl.args), match=sub(decl.match), expect=sub(decl.expect))
 

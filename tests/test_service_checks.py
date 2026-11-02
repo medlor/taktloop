@@ -196,3 +196,15 @@ def test_evidence_rules(env):
     with pytest.raises(Rejected, match="^this step takes no evidence$"):
         svc.complete_step(BOT, t.step_id, c.claim_token, "completed", [art],
                           evidence={"ci_run": "1"})
+
+
+def test_check_step_takes_no_artifacts(env):
+    svc, results, calls = env
+    t = build(svc, svc.create_task(BOT, "T").step_id)
+    c = svc.claim_step(BOT, t.step_id)
+    art = ArtifactIn(name="change", path=".", commit=SHA_B, branch="b")
+    results.append(ci())
+    with pytest.raises(Rejected, match="^this step takes no artifacts$"):
+        svc.complete_step(BOT, t.step_id, c.claim_token, "completed", [art],
+                          evidence={"ci_run": "12345"})
+    assert calls == []

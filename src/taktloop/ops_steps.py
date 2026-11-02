@@ -51,11 +51,15 @@ class StepOps(ServiceBase):
             run = self._load_owned(tx, ids, caller, "complete_step", step_id, claim_token)
             step = self._wf.step(run.step)
             _check_evidence(step.evidence, evidence)
-            if step.check and outcome != "completed":
+            if not step.check:
+                return run.task_id, None
+            if outcome != "completed":
                 raise Rejected(f"outcome must be 'completed', got {outcome!r}")
+            if artifacts and not step.required_artifacts:
+                raise Rejected("this step takes no artifacts")
             arts = {a.name: a for a in latest_rounds(self._artifacts(tx, run.task_id))}
-            try:  # the check's arguments and wanted values, or None when the step has no check
-                return run.task_id, step.check and resolve(step.check, evidence, arts)
+            try:  # the check's arguments and wanted values
+                return run.task_id, resolve(step.check, evidence, arts)
             except CheckUnavailable as e:
                 raise Rejected(f"CI check could not run: {e}") from None
 

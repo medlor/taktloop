@@ -155,7 +155,8 @@ it; they push and look up runs with their own `gh` login):
 The core reads `TAKTLOOP_GITHUB_TOKEN` from its environment first, then from
 `.env`. Without it the core still starts (with a warning), and every CI check
 is refused with "the core has no credential for github
-(TAKTLOOP_GITHUB_TOKEN is not set)". The token is never written to
+(TAKTLOOP_GITHUB_TOKEN is not set)". The core reads `.env` at startup, so
+restart it after adding or changing the token. The token is never written to
 `factory.yaml`, the database, logs or events.
 
 ### The demo
