@@ -126,3 +126,48 @@ def real_issuer(tmp_path):
     yield url, tmp_path / "creds"
     server.should_exit = True
     thread.join(timeout=5)
+
+
+@pytest.fixture
+def fake_github():
+    """A fake GitHub MCP server (uvicorn in a thread). Yields (URL, calls); each call is a dict
+    of the tool name, its arguments and the bearer token received."""
+    from mcp.server.mcpserver import MCPServer
+    from mcp.server.mcpserver.exceptions import ToolError
+    from starlette.middleware.base import BaseHTTPMiddleware
+
+    calls, seen = [], []
+    mcp_server = MCPServer("fake-github")
+
+    @mcp_server.tool()
+    def actions_get(method: str, owner: str, repo: str, resource_id: str) -> dict:
+        if resource_id == "999":
+            raise ToolError("failed to get workflow run: 404 Not Found")
+        calls.append({"tool": "actions_get", "token": seen[-1], "method": method, "owner": owner,
+                      "repo": repo, "resource_id": resource_id})
+        return {"method": method, "workflow_run": {"id": int(resource_id), "status": "completed"}}
+
+    @mcp_server.tool()
+    def sleepy(seconds: float) -> dict:
+        time.sleep(seconds)
+        return {}
+
+    class Spy(BaseHTTPMiddleware):
+        async def dispatch(self, request, call_next):
+            seen.append(request.headers.get("authorization", ""))
+            return await call_next(request)
+
+    app = mcp_server.streamable_http_app()
+    app.add_middleware(Spy)
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 10
+    while not server.started and time.monotonic() < deadline:
+        time.sleep(0.02)
+    yield f"http://127.0.0.1:{port}/mcp", calls
+    server.should_exit = True
+    thread.join(timeout=5)

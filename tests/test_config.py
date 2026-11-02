@@ -56,3 +56,28 @@ def test_separation_rejects_other_values(tmp_path: Path):
     path.write_text("separation: loose\n" + WORKFLOW)
     with pytest.raises(WorkflowError, match="separation"):
         load_config(path)
+
+
+CHECKED = WORKFLOW.replace("      next: done", """      next: done
+      check: {mcp_server: github, tool: t, expect: {a: b}}
+      evidence: [x]
+      on_fail: only""")
+
+
+def test_mcp_servers_load(tmp_path: Path):
+    path = tmp_path / "factory.yaml"
+    path.write_text(CHECKED + "mcp_servers:\n  github: {url: https://h/mcp, token_env: GH_TOK}\n")
+    cfg = load_config(path)
+    assert cfg.mcp_servers["github"].url == "https://h/mcp"
+    assert cfg.mcp_servers["github"].token_env == "GH_TOK"
+    assert cfg.env_file == tmp_path / ".env"
+    path.write_text(WORKFLOW + "mcp_servers:\n  github: {url: https://h/mcp}\n")
+    with pytest.raises(WorkflowError, match="token_env"):
+        load_config(path)
+
+
+def test_check_with_unknown_server_is_refused(tmp_path: Path):
+    path = tmp_path / "factory.yaml"
+    path.write_text(CHECKED)
+    with pytest.raises(WorkflowError, match="step 'only': check uses unknown mcp_server 'github'"):
+        load_config(path)
