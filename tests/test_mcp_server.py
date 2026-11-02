@@ -82,13 +82,14 @@ async def test_no_token_is_not_authenticated(client_for):
 
 
 async def test_subject_from_token_reaches_history(client_for):
-    with as_identity("agent-a", "planner"):
+    with as_identity("agent-a", "requester", "planner"):
         async with client_for() as c:
             t = await c.call_tool("create_task", {"title": "T"})
             await c.call_tool("claim_step", {"step_id": t.structured_content["step_id"]})
             r = await c.call_tool("get_task", {"task_id": t.structured_content["id"]})
     assert "agent-a (claude-code)" in r.structured_content["waiting_for"]
-    assert any(e["caller"] == "agent-a (claude-code)" for e in r.structured_content["history"])
+    assert any((e["subject"], e["roles"], e["executor"]) == ("agent-a", ["planner", "requester"], "claude-code")
+               for e in r.structured_content["history"])
 
 
 async def test_roles_come_from_this_factorys_scopes(monkeypatch, client_for):

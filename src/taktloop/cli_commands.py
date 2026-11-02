@@ -137,7 +137,8 @@ def render_task_detail(d: dict) -> str:
     lines += ["  " + ln for ln in _table(arts)] if arts else ["  none"]
     lines += ["", "history:"]
     hist = [
-        (_when(e["at"]), e["caller"], e["operation"], e["step"] or "-", e["result"], _event_note(e))
+        (_when(e["at"]), f"{e['subject']} ({e['executor']})" if e["executor"] else e["subject"],
+         ", ".join(e["roles"]) or "-", e["operation"], e["step"] or "-", e["result"], _event_note(e))
         for e in d["history"]
     ]  # fmt: skip
     lines += ["  " + ln for ln in _table(hist)] if hist else ["  none"]
@@ -184,8 +185,13 @@ def _request(ns) -> tuple[str, dict, object]:
 
 def _serve(cfg) -> int:
     from taktloop import serve  # the server stack; client commands never load it
+    from taktloop.store import SchemaMismatch
 
-    serve.run(cfg)
+    try:
+        serve.run(cfg)
+    except SchemaMismatch as e:  # an M1 database: tell the user to delete it, no traceback
+        print(f"taktloop: {e}", file=sys.stderr)
+        return 2
     return 0
 
 

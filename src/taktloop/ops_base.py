@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from taktloop.models import Artifact, Claim, TaskSummary
+from taktloop.permissions import ROLES, STEP, require
 from taktloop.rules import Rejected, same_token, waiting_for
 from taktloop.store import StepRunRow, Store, TaskRow, Tx
 from taktloop.workflow import Workflow
@@ -21,7 +22,14 @@ class Caller:
 
     @property
     def label(self) -> str:
-        return f"{self.subject} ({self.executor})" if self.executor else self.subject
+        return _label(self.subject, self.executor)
+
+
+def _label(subject: str | None, executor: str | None) -> str | None:
+    return f"{subject} ({executor})" if executor else subject
+
+
+CORE = Caller("core", frozenset())
 
 
 @dataclass
@@ -43,37 +51,40 @@ class ServiceBase:
 
     # --- shared helpers -------------------------------------------------
 
-    def _event(self, tx: Tx, who: str, operation: str, ids: _Ids, detail: dict,
+    def _event(self, tx: Tx, who: Caller, operation: str, ids: _Ids, detail: dict,
                result: str = "ok", reason: str | None = None) -> None:
-        tx.insert_event(self._clock(), who, operation, ids.task_id, ids.step_run_id,
-                        detail, result, reason)
+        tx.insert_event(self._clock(), who.subject, sorted(who.roles), who.executor, operation,
+                        ids.task_id, ids.step_run_id, detail, result, reason)
 
     def _run(self, caller: Caller, operation: str, detail: dict[str, Any],
              body: Callable[[Tx, _Ids], Any], *, writes: bool = True) -> Any:
-        """One transaction per operation; rejections are rolled back, then recorded."""
+        """One transaction per operation; rejections are rolled back, then recorded.
+        Step-bound permissions are checked by the body once it has loaded the step."""
         ids = _Ids()
         with self._store.transaction() as tx:  # own txn: expiry survives a rejected op
             for run in tx.step_runs_with_status(["claimed"]):
                 self._expire(tx, run)
         try:
             with self._store.transaction() as tx:
+                if ROLES[operation] != STEP:
+                    require(caller, operation)
                 result = body(tx, ids)
                 if writes:
-                    self._event(tx, caller.label, operation, ids, detail)
+                    self._event(tx, caller, operation, ids, detail)
                 return result
         except Rejected as r:
             with self._store.transaction() as tx:
-                self._event(tx, caller.label, operation, ids, detail, "rejected", r.reason)
+                self._event(tx, caller, operation, ids, detail, "rejected", r.reason)
             raise
 
     def _expire(self, tx: Tx, run: StepRunRow) -> StepRunRow:
         """Lazy lease expiry: an overdue claimed run becomes open again."""
         if run.status != "claimed" or run.lease_expires_at > self._clock():
             return run
-        tx.update_step_run(run.id, status="open", claimed_by=None, claim_token=None,
-                           lease_expires_at=None)
-        self._event(tx, "core", "lease_expired", _Ids(run.task_id, run.id),
-                    {"step_id": run.id, "was_claimed_by": run.claimed_by})
+        tx.update_step_run(run.id, status="open", claimed_by=None, claimed_executor=None,
+                           claim_token=None, lease_expires_at=None)
+        self._event(tx, CORE, "lease_expired", _Ids(run.task_id, run.id),
+                    {"step_id": run.id, "was_claimed_by": _holder(run)})
         return tx.get_step_run(run.id)
 
     def _load(self, tx: Tx, ids: _Ids, step_id: int) -> StepRunRow:
@@ -83,12 +94,13 @@ class ServiceBase:
         ids.task_id, ids.step_run_id = run.task_id, run.id
         return self._expire(tx, run)
 
-    def _load_owned(self, tx: Tx, ids: _Ids, step_id: int, claim_token: str) -> StepRunRow:
+    def _load_owned(self, tx: Tx, ids: _Ids, caller: Caller, operation: str, step_id: int,
+                    claim_token: str) -> StepRunRow:
         run = self._load(tx, ids, step_id)
+        require(caller, operation, self._wf.step(run.step))
         if run.status != "claimed":
             raise Rejected("step is not claimed (lease expired or released); claim it again")
-        if not same_token(run.claim_token, claim_token):
-            raise Rejected("claim token does not match")
+        _check_owner(run, caller, claim_token)
         return run
 
     def _summary(self, tx: Tx, task: TaskRow) -> TaskSummary:
@@ -101,7 +113,7 @@ class ServiceBase:
             current_step=run.step if run else None, step_id=run.id if run else None,
             waiting_for=waiting_for(
                 self._wf.step(run.step) if run else None,
-                run.status if run else "open", run.claimed_by if run else None,
+                run.status if run else "open", _holder(run) if run else None,
                 run.lease_expires_at if run else None))
 
     def _open_step(self, tx: Tx, task_id: int, step: str) -> int:
@@ -120,3 +132,14 @@ class ServiceBase:
         expires = self._clock() + self._lease
         tx.update_step_run(run.id, lease_expires_at=expires)
         return Claim(step_id=run.id, claim_token=run.claim_token, lease_expires_at=expires)
+
+
+def _holder(run: StepRunRow) -> str | None:
+    return _label(run.claimed_by, run.claimed_executor)
+
+
+def _check_owner(run: StepRunRow, caller: Caller, claim_token: str | None) -> None:
+    if run.claimed_by != caller.subject:
+        raise Rejected(f"step is claimed by {run.claimed_by}, not you")
+    if not (claim_token and same_token(run.claim_token, claim_token)):
+        raise Rejected("claim token does not match")

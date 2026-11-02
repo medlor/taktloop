@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _SCHEMA = """
 CREATE TABLE tasks (
@@ -27,7 +27,7 @@ CREATE TABLE step_runs (
     task_id INTEGER NOT NULL REFERENCES tasks(id),
     step TEXT NOT NULL, round INTEGER NOT NULL,
     status TEXT NOT NULL DEFAULT 'open',
-    claimed_by TEXT, claim_token TEXT, lease_expires_at TEXT,
+    claimed_by TEXT, claimed_executor TEXT, claim_token TEXT, lease_expires_at TEXT,
     outcome TEXT, evidence TEXT,
     opened_at TEXT NOT NULL, closed_at TEXT
 );
@@ -38,7 +38,8 @@ CREATE TABLE artifacts (
 );
 CREATE TABLE events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    at TEXT NOT NULL, caller TEXT NOT NULL, operation TEXT NOT NULL,
+    at TEXT NOT NULL, subject TEXT NOT NULL, roles TEXT NOT NULL, executor TEXT,
+    operation TEXT NOT NULL,
     task_id INTEGER, step_run_id INTEGER,
     detail TEXT NOT NULL, result TEXT NOT NULL, reason TEXT
 );
@@ -70,6 +71,7 @@ class StepRunRow:
     round: int
     status: str
     claimed_by: str | None
+    claimed_executor: str | None
     claim_token: str | None
     lease_expires_at: datetime | None
     outcome: str | None
@@ -92,7 +94,9 @@ class ArtifactRow:
 class EventRow:
     id: int
     at: datetime
-    caller: str
+    subject: str
+    roles: list[str]
+    executor: str | None
     operation: str
     task_id: int | None
     step_run_id: int | None
@@ -102,7 +106,7 @@ class EventRow:
 
 
 _DATETIME_FIELDS = {"created_at", "lease_expires_at", "opened_at", "closed_at", "at"}
-_JSON_FIELDS = {"evidence", "detail"}
+_JSON_FIELDS = {"evidence", "detail", "roles"}
 _STEP_RUN_FIELDS = {f.name for f in dataclasses.fields(StepRunRow)} - {"id"}
 
 
@@ -216,14 +220,14 @@ class Tx:
                          (task_id,))
 
     # events
-    def insert_event(self, at: datetime, caller: str, operation: str, task_id: int | None,
-                     step_run_id: int | None, detail: dict, result: str,
-                     reason: str | None) -> int:
+    def insert_event(self, at: datetime, subject: str, roles: list[str], executor: str | None,
+                     operation: str, task_id: int | None, step_run_id: int | None,
+                     detail: dict, result: str, reason: str | None) -> int:
         cur = self._c.execute(
-            "INSERT INTO events (at, caller, operation, task_id, step_run_id, detail, result, "
-            "reason) VALUES (?,?,?,?,?,?,?,?)",
-            (_encode("at", at), caller, operation, task_id, step_run_id,
-             _encode("detail", detail), result, reason))
+            "INSERT INTO events (at, subject, roles, executor, operation, task_id, step_run_id, "
+            "detail, result, reason) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (_encode("at", at), subject, _encode("roles", roles), executor, operation, task_id,
+             step_run_id, _encode("detail", detail), result, reason))
         return cur.lastrowid
 
     def list_events(self, task_id: int) -> list[EventRow]:
@@ -246,7 +250,8 @@ class Store:
                         f"BEGIN IMMEDIATE;{_SCHEMA}PRAGMA user_version = {SCHEMA_VERSION};COMMIT;")
             elif version != SCHEMA_VERSION:
                 raise SchemaMismatch(
-                    f"{path} has schema version {version}, expected {SCHEMA_VERSION}")
+                    f"{path} has schema version {version}, expected {SCHEMA_VERSION}; delete "
+                    f"{path} to start fresh (M1 data is not migrated)")
         except BaseException:
             self._conn.close()
             raise

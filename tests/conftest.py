@@ -45,7 +45,8 @@ def real_issuer(tmp_path):
     (tmp_path / "dev-issuer.yaml").write_text(
         f"issuer: {url}\naudience: taktloop\ntoken_lifetime: 12h\nstate_dir: state\n"
         "identities:\n  agent-a: {scopes: [taktloop:taktloop:planner, taktloop:taktloop:reviewer]}\n"
-        "  tobias: {scopes: [taktloop:taktloop:approver]}\n"
+        "  tobias: {scopes: [taktloop:taktloop:requester, taktloop:taktloop:approver,"
+        " taktloop:taktloop:reviewer, taktloop:taktloop:factory_owner]}\n"
     )
     cfg = load_issuer_config(tmp_path / "dev-issuer.yaml")
     init_state(cfg, tmp_path / "creds")

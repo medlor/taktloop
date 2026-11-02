@@ -25,7 +25,7 @@ SHA = "a" * 40
 pytestmark = pytest.mark.e2e
 
 CONFIG = """\
-factory: e2e
+factory: taktloop  # matches the real_issuer scopes
 server: {{host: 127.0.0.1, port: {port}}}
 database: {db}
 auth: {{issuer: {issuer}, audience: taktloop}}

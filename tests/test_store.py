@@ -42,10 +42,12 @@ def test_update_step_run_fields(store):
     with store.transaction() as tx:
         tid = tx.insert_task("T", "r", "a", T0)
         sid = tx.insert_step_run(tid, "s", 1, T0)
-        tx.update_step_run(sid, status="claimed", claimed_by="bob", claim_token="tok",
-                           lease_expires_at=exp, evidence={"k": [1]}, closed_at=T0)
+        tx.update_step_run(sid, status="claimed", claimed_by="bob", claimed_executor="codex",
+                           claim_token="tok", lease_expires_at=exp, evidence={"k": [1]},
+                           closed_at=T0)
         run = tx.get_step_run(sid)
-        assert (run.claimed_by, run.claim_token, run.lease_expires_at) == ("bob", "tok", exp)
+        assert (run.claimed_by, run.claimed_executor, run.claim_token, run.lease_expires_at) == (
+            "bob", "codex", "tok", exp)
         assert run.evidence == {"k": [1]} and run.closed_at == T0
         assert tx.step_runs_with_status(["claimed"]) == [run]
         assert tx.step_runs_with_status(["open"]) == []
@@ -104,13 +106,29 @@ def test_schema_version_mismatch(tmp_path):
         Store(path)
 
 
+def test_schema_v1_file_is_refused_with_delete_hint(tmp_path):
+    path = tmp_path / "factory.db"
+    raw = sqlite3.connect(path)
+    raw.execute("CREATE TABLE events (caller TEXT)")
+    raw.execute("PRAGMA user_version = 1")
+    raw.close()
+    with pytest.raises(SchemaMismatch) as e:
+        Store(path)
+    assert str(e.value) == (f"{path} has schema version 1, expected 2; delete {path} to start "
+                            "fresh (M1 data is not migrated)")
+
+
 def test_events_ordered_and_detail_json(store):
     with store.transaction() as tx:
-        e1 = tx.insert_event(T0, "alice", "claim", 7, None, {"a": [1]}, "ok", None)
-        e2 = tx.insert_event(T0, "bob", "complete", 7, 3, {}, "rejected", "nope")
-        tx.insert_event(T0, "bob", "claim", 8, None, {}, "ok", None)
+        e1 = tx.insert_event(T0, "alice", ["planner", "reviewer"], "claude-code", "claim", 7,
+                             None, {"a": [1]}, "ok", None)
+        e2 = tx.insert_event(T0, "bob", [], None, "complete", 7, 3, {}, "rejected", "nope")
+        tx.insert_event(T0, "bob", [], None, "claim", 8, None, {}, "ok", None)
         evs = tx.list_events(7)
     assert [e.id for e in evs] == [e1, e2]
+    assert (evs[0].subject, evs[0].roles, evs[0].executor) == (
+        "alice", ["planner", "reviewer"], "claude-code")
+    assert (evs[1].subject, evs[1].roles, evs[1].executor) == ("bob", [], None)
     assert evs[0].detail == {"a": [1]} and evs[0].reason is None and evs[0].at == T0
     assert (evs[1].result, evs[1].reason, evs[1].step_run_id) == ("rejected", "nope", 3)
 

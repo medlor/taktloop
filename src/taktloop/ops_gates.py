@@ -6,6 +6,7 @@ from typing import Literal
 
 from taktloop.models import TaskSummary
 from taktloop.ops_base import Caller, ServiceBase, _Ids
+from taktloop.permissions import require
 from taktloop.rules import Rejected, clean_reason, latest_rounds
 from taktloop.store import Tx
 from taktloop.workflow import DONE
@@ -29,6 +30,7 @@ class GateOps(ServiceBase):
                 raise Rejected(f"task {task_id} is not at a gate")
             ids.step_run_id = run.id
             names["gate"] = run.step
+            require(caller, "decide_gate", self._wf.step(run.step))
             if gate is not None and gate != run.step:
                 raise Rejected(f"task {task_id} is at gate {run.step}, not {gate}")
             step = self._wf.step(run.step)

@@ -57,7 +57,9 @@ class StepContext(BaseModel):
 
 class Event(BaseModel):
     at: datetime
-    caller: str
+    subject: str
+    roles: list[str]
+    executor: str | None
     operation: str
     step: str | None
     result: str

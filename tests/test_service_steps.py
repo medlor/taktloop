@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 import yaml
 
+from conftest import ALL_ROLES
 from taktloop.models import ArtifactIn
 from taktloop.service import Caller, Rejected, Service
 from taktloop.store import Store
@@ -40,7 +41,7 @@ steps:
     next: done
 """
 )
-ME = Caller("local", frozenset({"*"}), "claude-code")
+ME = Caller("local", frozenset(ALL_ROLES), "claude-code")
 SHA = "a" * 40
 
 
@@ -177,7 +178,8 @@ def test_complete_opens_next_step(svc, store):
         assert [a.name for a in tx.list_artifacts(t.id)] == ["design_doc"]
     ev = events(store)[-1]
     assert ev.operation == "complete_step" and ev.result == "ok"
-    assert "claim_token" not in ev.detail and ev.caller == "local (claude-code)"
+    assert "claim_token" not in ev.detail
+    assert (ev.subject, ev.roles, ev.executor) == ("local", sorted(ALL_ROLES), "claude-code")
 
 
 def test_gate_run_cannot_be_claimed(svc):

@@ -27,7 +27,7 @@ class Service(StepOps, GateOps):
             out = []
             for run in tx.step_runs_with_status(["open"]):
                 step = self._wf.step(run.step)
-                if step.kind == "agent":
+                if step.kind == "agent" and step.role in caller.roles:
                     out.append(OpenStep(step_id=run.id, task_id=run.task_id,
                                         task_title=tx.get_task(run.task_id).title,
                                         step=run.step, skill=step.skill, round=run.round))
@@ -63,7 +63,8 @@ class Service(StepOps, GateOps):
             for e in tx.list_events(task_id):
                 if e.step_run_id not in steps:
                     steps[e.step_run_id] = tx.get_step_run(e.step_run_id).step
-                history.append(Event(at=e.at, caller=e.caller, operation=e.operation,
+                history.append(Event(at=e.at, subject=e.subject, roles=e.roles,
+                                     executor=e.executor, operation=e.operation,
                                      step=steps[e.step_run_id], result=e.result,
                                      reason=e.reason, detail=e.detail))
             return TaskDetail(**summary.model_dump(), request=task.request,

@@ -13,7 +13,8 @@ DETAIL = {
     "request": "r",
     "artifacts": [{"name": "design_doc", "path": "docs/d.md", "commit": SHA,
                    "branch": "feat", "step": "design", "round": 1}],
-    "history": [{"at": "2026-11-01T09:05:00Z", "caller": "claude-code", "operation": "complete_step",
+    "history": [{"at": "2026-11-01T09:05:00Z", "subject": "agent-a", "roles": ["planner"], "executor": "claude-code",
+                  "operation": "complete_step",
                  "step": "design", "result": "ok", "reason": None, "detail": {}}],
 }  # fmt: skip
 
@@ -25,7 +26,7 @@ def test_render_task_detail_lines():
     assert "waiting for: waiting for approver decision at design_approval" in out
     assert f"design_doc  docs/d.md@{SHA[:12]}  feat" in out
     assert SHA not in out
-    assert "2026-11-01 09:05  claude-code  complete_step  design  ok" in out
+    assert "2026-11-01 09:05  agent-a (claude-code)  planner  complete_step  design  ok" in out
 
 
 def test_render_task_list_and_steps_empty():
@@ -90,13 +91,16 @@ def test_render_task_detail_shows_decisions_and_artifact_rounds():
     d = dict(DETAIL)
     d["artifacts"] = [dict(DETAIL["artifacts"][0], round=2)]
     d["history"] = [
-        {"at": "2026-11-01T09:06:00Z", "caller": "me", "operation": "decide_gate",
+        {"at": "2026-11-01T09:06:00Z", "subject": "me", "roles": ["approver"], "executor": None,
+          "operation": "decide_gate",
          "step": "design_approval", "result": "ok", "reason": None,
          "detail": {"decision": "reject", "reason": "needs flags", "artifacts": []}},
-        {"at": "2026-11-01T09:07:00Z", "caller": "me", "operation": "release_step",
+        {"at": "2026-11-01T09:07:00Z", "subject": "me", "roles": ["approver"], "executor": None,
+          "operation": "release_step",
          "step": "design", "result": "ok", "reason": None,
          "detail": {"reason": "stuck", "force": True}},
-        {"at": "2026-11-01T09:08:00Z", "caller": "me", "operation": "complete_step",
+        {"at": "2026-11-01T09:08:00Z", "subject": "me", "roles": ["approver"], "executor": None,
+          "operation": "complete_step",
          "step": "design", "result": "ok", "reason": None,
          "detail": {"artifacts": [{"name": "design_doc"}]}},
     ]
@@ -155,10 +159,12 @@ def test_render_done_task_has_no_step_line():
 def test_rejection_reason_does_not_widen_the_result_column():
     d = dict(DETAIL)
     d["history"] = [
-        {"at": "2026-11-01T09:05:00Z", "caller": "me", "operation": "decide_gate",
+        {"at": "2026-11-01T09:05:00Z", "subject": "me", "roles": ["approver"], "executor": None,
+          "operation": "decide_gate",
          "step": "design_approval", "result": "ok", "reason": None,
          "detail": {"decision": "approve"}},
-        {"at": "2026-11-01T09:06:00Z", "caller": "me", "operation": "complete_step",
+        {"at": "2026-11-01T09:06:00Z", "subject": "me", "roles": ["approver"], "executor": None,
+          "operation": "complete_step",
          "step": "design", "result": "rejected", "reason": "claim token does not match",
          "detail": {"artifacts": [{"name": "design_doc"}]}},
     ]
@@ -231,3 +237,17 @@ def test_token_command(real_issuer, capsys):
     assert out.count("\n") == 1 and out.strip().count(".") == 2
     assert cli.main(["token", "nobody", "--credentials", str(creds_dir)]) == 2
     assert "no credentials for nobody" in capsys.readouterr().err
+
+
+def test_serve_on_an_m1_database_says_delete_it(tmp_path, capsys):
+    import sqlite3
+
+    db = tmp_path / "factory.db"
+    raw = sqlite3.connect(db)
+    raw.execute("PRAGMA user_version = 1")
+    raw.close()
+    cfg = tmp_path / "factory.yaml"
+    cfg.write_text(f"database: {db}\nworkflow:\n  start: only\n  steps:\n    only: {{kind: agent, role: planner, skill: s, output: {{artifacts: [doc]}}, next: done}}\nauth: {{issuer: http://127.0.0.1:8766, audience: taktloop}}\n")
+    assert cli.main(["--config", str(cfg), "serve"]) == 2
+    err = capsys.readouterr().err
+    assert err.startswith("taktloop: ") and f"delete {db} to start fresh" in err
