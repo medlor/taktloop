@@ -4,6 +4,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from taktloop.checks import CheckDecl, parse_check, placeholders
+
 DONE = "done"  # reserved target name: the task is finished
 KINDS = ("agent", "human_gate")
 REVIEW_KEYS = ("review_of", "on_pass", "on_issues", "max_issue_rounds", "on_escalate")
@@ -29,6 +31,9 @@ class Step:
     on_issues: str | None = None
     max_issue_rounds: int | None = None
     on_escalate: str | None = None
+    evidence: tuple[str, ...] = ()
+    check: CheckDecl | None = None
+    on_fail: str | None = None
 
     @property
     def is_review(self) -> bool:
@@ -37,7 +42,7 @@ class Step:
     @property
     def targets(self) -> tuple[str, ...]:
         named = (self.next, self.on_approve, *self.on_reject, self.review_of, self.on_pass,
-                 self.on_issues, self.on_escalate)
+                 self.on_issues, self.on_escalate, self.on_fail)
         return tuple(t for t in named if t)
 
 
@@ -71,6 +76,7 @@ def _parse_step(name: str, raw: Any) -> Step:
             f"step {name!r}: kind {kind!r} is not supported yet (supported: {', '.join(KINDS)})"
         )
     skill, artifacts, nxt, approve, reject = None, (), None, None, ()
+    extra = _parse_check_fields(name, raw, kind)
     review = {k: raw.get(k) for k in REVIEW_KEYS}
     if kind == "agent":
         skill = raw.get("skill")
@@ -80,7 +86,7 @@ def _parse_step(name: str, raw: Any) -> Step:
             raise WorkflowError(f"step {name!r}: agent steps need a skill")
         if any(v is not None for v in review.values()):
             _check_review(name, review, raw)
-        elif not artifacts:
+        elif not artifacts and not extra["check"]:
             raise WorkflowError(f"step {name!r}: agent steps need output.artifacts")
         elif not nxt:
             raise WorkflowError(f"step {name!r}: agent steps need next")
@@ -101,7 +107,38 @@ def _parse_step(name: str, raw: Any) -> Step:
         on_approve=approve,
         on_reject=reject,
         **review,
+        **extra,
     )
+
+
+def _parse_check_fields(name: str, raw: dict, kind: str) -> dict:
+    fields = ("check", "evidence", "on_fail")
+    if all(raw.get(k) is None for k in fields):
+        return {"check": None, "evidence": (), "on_fail": None}
+    if kind != "agent" or any(raw.get(k) is not None for k in REVIEW_KEYS):
+        raise WorkflowError(f"step {name!r}: checks are allowed on agent work steps only")
+    if any(not raw.get(k) for k in fields):
+        raise WorkflowError(f"step {name!r}: check, evidence and on_fail go together")
+    try:
+        check = parse_check(raw["check"])
+    except ValueError as e:
+        raise WorkflowError(f"step {name!r}: {e}") from None
+    evidence = raw["evidence"]
+    if not isinstance(evidence, list) or not all(isinstance(e, str) for e in evidence):
+        raise WorkflowError(f"step {name!r}: evidence must be a list of keys")
+    return {"check": check, "evidence": tuple(evidence), "on_fail": str(raw["on_fail"])}
+
+
+def _check_placeholders(steps: Mapping[str, Step]) -> None:
+    artifacts = {a for s in steps.values() for a in s.required_artifacts}
+    for step in steps.values():
+        for ph in sorted(placeholders(step.check)) if step.check else ():
+            parts = ph.split(".")
+            ok = (parts[0] == "evidence" and ".".join(parts[1:]) in step.evidence) or (
+                len(parts) == 3 and parts[0] == "artifacts" and parts[1] in artifacts
+                and parts[2] in ("commit", "branch", "path"))
+            if not ok:
+                raise WorkflowError(f"step {step.name!r}: unknown placeholder {ph}")
 
 
 def _check_review(name: str, review: dict, raw: dict) -> None:
@@ -125,6 +162,7 @@ def parse_workflow(data: dict) -> Workflow:
         work = steps.get(step.review_of)
         if step.is_review and (work is None or work.kind != "agent" or work.is_review):
             raise WorkflowError(f"step {step.name!r}: review_of must name an agent work step")
+    _check_placeholders(steps)
     start = data.get("start")
     if start not in steps:
         raise WorkflowError(f"start step {start!r} does not exist")

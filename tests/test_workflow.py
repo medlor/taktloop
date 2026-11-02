@@ -201,3 +201,78 @@ def test_on_reject_list_targets_must_exist():
     data["steps"]["plan_escalation"]["on_reject"] = ["plan", "nowhere"]
     with pytest.raises(WorkflowError, match="nowhere"):
         parse_workflow(data)
+
+
+def _verify_workflow(**verify_changes):
+    verify = {
+        "kind": "agent", "role": "verifier", "skill": "verification-before-completion",
+        "instructions": "Wait for CI.",
+        "evidence": ["ci_run"],
+        "check": {
+            "mcp_server": "github", "tool": "actions_get",
+            "args": {"resource_id": "{{evidence.ci_run}}"},
+            "match": {"workflow_run.head_sha": "{{artifacts.change.commit}}"},
+            "expect": {"workflow_run.conclusion": "success"},
+        },
+        "next": "done", "on_fail": "work",
+    }
+    verify.update(verify_changes)
+    verify = {k: v for k, v in verify.items() if v is not None}
+    return {"start": "work", "steps": {
+        "work": {"kind": "agent", "role": "builder", "skill": "s", "instructions": "i",
+                 "output": {"artifacts": ["change"]}, "next": "verify"},
+        "verify": verify,
+    }}
+
+
+def test_check_step_loads():
+    step = parse_workflow(_verify_workflow()).step("verify")
+    assert step.evidence == ("ci_run",)
+    assert step.check.tool == "actions_get"
+    assert "work" in step.targets
+
+
+def _with_check(**check_changes):
+    base = _verify_workflow()["steps"]["verify"]["check"]
+    return _verify_workflow(check={**base, **check_changes})
+
+
+def _on_review():
+    wf = _verify_workflow()
+    wf["steps"]["review"] = {
+        "kind": "agent", "role": "reviewer", "skill": "s", "instructions": "i",
+        "review_of": "work", "on_pass": "verify", "on_issues": "work",
+        "check": wf["steps"]["verify"]["check"],
+    }
+    wf["steps"]["work"]["next"] = "review"
+    return wf
+
+
+def _on_gate():
+    wf = _verify_workflow()
+    wf["steps"]["gate"] = {"kind": "human_gate", "role": "approver", "on_approve": "verify",
+                           "on_reject": "work", "check": wf["steps"]["verify"]["check"]}
+    wf["steps"]["work"]["next"] = "gate"
+    return wf
+
+
+@pytest.mark.parametrize("wf, msg", [
+    (_verify_workflow(on_fail=None), "check, evidence and on_fail go together"),
+    (_verify_workflow(check=None), "check, evidence and on_fail go together"),
+    (_with_check(args={"resource_id": "{{evidence.run}}"}), "unknown placeholder evidence.run"),
+    (_with_check(match={"a": "{{artifacts.nope.commit}}"}), "unknown placeholder artifacts.nope.commit"),
+    (_with_check(match={"a": "{{artifacts.change.sha}}"}), "unknown placeholder artifacts.change.sha"),
+    (_with_check(match={"a": "{{task.id}}"}), "unknown placeholder task.id"),
+    (_on_review(), "checks are allowed on agent work steps only"),
+    (_on_gate(), "checks are allowed on agent work steps only"),
+    (_verify_workflow(on_fail="nowhere"), "points to unknown step"),
+    (_with_check(tool=None), "tool"),
+])
+def test_check_step_refusals(wf, msg):
+    with pytest.raises(WorkflowError, match=msg):
+        parse_workflow(wf)
+
+
+def test_check_step_needs_no_artifacts():
+    step = parse_workflow(_verify_workflow()).step("verify")
+    assert step.required_artifacts == ()
