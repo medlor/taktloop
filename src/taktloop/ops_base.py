@@ -11,7 +11,7 @@ from taktloop.models import Artifact, Claim, TaskSummary
 from taktloop.permissions import require
 from taktloop.rules import Rejected, same_token, waiting_for
 from taktloop.store import StepRunRow, Store, TaskRow, Tx
-from taktloop.workflow import Workflow
+from taktloop.workflow import DONE, Workflow
 
 
 @dataclass(frozen=True)
@@ -119,6 +119,13 @@ class ServiceBase:
     def _open_step(self, tx: Tx, task_id: int, step: str) -> int:
         last = tx.last_step_run(task_id, step)
         return tx.insert_step_run(task_id, step, (last.round if last else 0) + 1, self._clock())
+
+    def _advance(self, tx: Tx, task_id: int, target: str) -> None:
+        """Open `target` as the task's next run, or finish the task."""
+        if target == DONE:
+            tx.set_task_status(task_id, "done")
+        else:
+            self._open_step(tx, task_id, target)
 
     def _artifacts(self, tx: Tx, task_id: int) -> list[Artifact]:
         out = []

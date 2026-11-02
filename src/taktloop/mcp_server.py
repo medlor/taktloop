@@ -142,4 +142,11 @@ def build_server(service: Service, factory: str, verifier: JwtVerifier | None,
         `target` (one of the gate's on_reject steps, default the first)."""
         return service.decide_gate(caller(ctx), task_id, gate, decision, reason, target)
 
+    @tool
+    def override_review(ctx: Context, task_id: int, reason: str,
+                        review_step: str = "plan_review") -> TaskSummary:
+        """Approver only: approve the latest completed round of the reviewed step regardless
+        of review verdicts; the task's current run is closed as superseded."""
+        return service.override_review(caller(ctx), task_id, review_step, reason)
+
     return server

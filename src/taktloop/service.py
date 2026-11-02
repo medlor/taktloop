@@ -42,7 +42,7 @@ class Service(StepOps, GateOps):
                 step_id=run.id, task_id=task.id, task_title=task.title, request=task.request,
                 step=run.step, skill=step.skill or "", instructions=step.instructions,
                 required_artifacts=list(step.required_artifacts), round=run.round,
-                feedback=_feedback(tx, run),
+                feedback=_feedback(tx, run), review_of=step.review_of,
                 artifacts=latest_rounds(self._artifacts(tx, task.id), exclude_step=run.step if run.round == 1 else None))
         return self._run(caller, "get_step_context", {"step_id": step_id}, body, writes=False)
 

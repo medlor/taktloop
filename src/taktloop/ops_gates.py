@@ -5,11 +5,10 @@ from __future__ import annotations
 from typing import Literal
 
 from taktloop.models import TaskSummary
-from taktloop.ops_base import Caller, ServiceBase, _Ids
+from taktloop.ops_base import Caller, ServiceBase, _holder, _Ids
 from taktloop.permissions import require
 from taktloop.rules import Rejected, clean_reason, latest_rounds
 from taktloop.store import Tx
-from taktloop.workflow import DONE
 
 
 class GateOps(ServiceBase):
@@ -50,9 +49,42 @@ class GateOps(ServiceBase):
                                   latest_rounds(self._artifacts(tx, task_id))]
             tx.update_step_run(run.id, status="completed", outcome=outcome,
                                closed_at=self._clock())
-            if dest == DONE:
-                tx.set_task_status(task_id, "done")
-            else:
-                self._open_step(tx, task_id, dest)
+            self._advance(tx, task_id, dest)
             return self._summary(tx, tx.get_task(task_id))
         return self._run(caller, "decide_gate", names, body)
+
+    def override_review(self, caller: Caller, task_id: int, review_step: str,
+                        reason: str) -> TaskSummary:
+        """Approve the latest completed round of the review step's review_of, whatever the
+        verdicts (spec 6.3). Closes the current run as superseded; verdicts stay as they are."""
+        names: dict = {"task_id": task_id, "review_step": review_step, "reason": reason}
+
+        def body(tx: Tx, ids: _Ids) -> TaskSummary:
+            task = tx.get_task(task_id)
+            if task is None:
+                raise Rejected(f"unknown task {task_id}")
+            ids.task_id = task_id
+            review = self._wf.steps.get(review_step)
+            if review is None or not review.is_review:
+                raise Rejected(f"{review_step} is not a review step")
+            names["reason"] = clean_reason(reason)
+            runs = tx.list_step_runs(task_id)
+            verdicts = [r for r in runs
+                        if r.step == review.name and r.outcome in ("pass", "issues")]
+            run = tx.current_step_run(task_id)
+            run = self._expire(tx, run) if run else None
+            if run is None or not (run.step in (review.name, review.on_escalate) or (
+                    run.step == review.review_of and verdicts and run.id > verdicts[0].id)):
+                raise Rejected(f"task {task_id} has no review of {review.review_of} to override")
+            ids.step_run_id = run.id
+            if run.status == "claimed":
+                names["cancelled_claim"] = _holder(run)
+            names["verdicts"] = [{"outcome": r.outcome, "by": r.claimed_by, "round": r.round}
+                                 for r in verdicts]
+            names["approved"] = [a.model_dump() for a in latest_rounds(
+                a for a in self._artifacts(tx, task_id) if a.step == review.review_of)]
+            tx.update_step_run(run.id, status="completed", outcome="superseded",
+                               closed_at=self._clock())
+            self._advance(tx, task_id, review.on_pass)
+            return self._summary(tx, tx.get_task(task_id))
+        return self._run(caller, "override_review", names, body)

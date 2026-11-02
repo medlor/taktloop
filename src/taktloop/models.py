@@ -62,6 +62,7 @@ class StepContext(BaseModel):
     round: int
     feedback: Feedback | None
     artifacts: list[Artifact]
+    review_of: str | None = None  # set on review steps: the step whose work is reviewed
 
 
 class Event(BaseModel):

@@ -16,6 +16,7 @@ from taktloop.workflow import parse_workflow
 TOOLS = {
     "create_task", "list_tasks", "get_task", "list_open_steps", "claim_step",
     "get_step_context", "heartbeat", "complete_step", "release_step", "decide_gate",
+    "override_review",
 }  # fmt: skip
 
 pytestmark = pytest.mark.anyio
@@ -40,7 +41,7 @@ def client_for():
     store.close()
 
 
-async def test_lists_exactly_the_m1_tools(client_for):
+async def test_lists_exactly_the_tools(client_for):
     async with client_for() as c:
         assert {t.name for t in (await c.list_tools()).tools} == TOOLS
 
@@ -110,3 +111,12 @@ async def test_list_results_are_wrapped(client_for):
         await c.call_tool("create_task", {"title": "T"})
         assert len((await c.call_tool("list_tasks", {})).structured_content["tasks"]) == 1
         assert len((await c.call_tool("list_open_steps", {})).structured_content["steps"]) == 1
+
+
+async def test_override_review_tool_defaults_to_plan_review(client_for):
+    async with client_for() as c:
+        t = await c.call_tool("create_task", {"title": "T"})
+        r = await c.call_tool("override_review", {"task_id": t.structured_content["id"],
+                                                  "reason": "skip"})
+    assert r.is_error
+    assert r.content[0].text.endswith("plan_review is not a review step")  # the default step

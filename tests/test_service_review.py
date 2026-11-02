@@ -4,7 +4,7 @@ import pytest
 
 from taktloop.config import load_config
 from taktloop.models import ArtifactIn
-from taktloop.service import Rejected, Service
+from taktloop.service import Caller, Rejected, Service
 from test_service_steps import ME, SHA, clock, store  # noqa: F401
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -143,3 +143,108 @@ def test_escalation_approve_finishes(svc):
     work(svc, tid, "plan", SHA2)
     review(svc, tid, "issues", "two")
     assert svc.decide_gate(ME, tid, None, "approve").status == "done"
+
+
+# --- override_review (spec 6.3) ------------------------------------------------
+
+AGENT_B = Caller("agent-b", frozenset({"reviewer"}), "codex")
+
+
+def runs_of(store, tid, step):
+    with store.transaction() as tx:
+        return [r for r in tx.list_step_runs(tid) if r.step == step]
+
+
+def override_event(svc, tid):
+    [e] = [e for e in svc.get_task(ME, tid).history if e.operation == "override_review"]
+    return e
+
+
+def two_issues(svc):
+    tid = at_review(svc)
+    review(svc, tid, "issues", "one")
+    work(svc, tid, "plan", SHA2)
+    review(svc, tid, "issues", "two")
+    return tid
+
+
+def test_override_at_open_review_step(svc, store):
+    tid = at_review(svc)
+    s = svc.override_review(ME, tid, "plan_review", "  good enough  ")
+    assert s.status == "done"
+    [run] = runs_of(store, tid, "plan_review")
+    assert (run.status, run.outcome) == ("completed", "superseded")
+    e = override_event(svc, tid)
+    assert e.result == "ok" and e.step == "plan_review"
+    assert (e.detail["reason"], e.detail["review_step"], e.detail["verdicts"]) == (
+        "good enough", "plan_review", [])
+    assert [(a["name"], a["round"], a["commit"]) for a in e.detail["approved"]] == [
+        ("plan", 1, SHA)]
+
+
+def test_override_cancels_a_claim_at_the_review_step(svc, store):
+    tid = at_review(svc)
+    t = svc.get_task(ME, tid)
+    c = svc.claim_step(AGENT_B, t.step_id)
+    assert svc.override_review(ME, tid, "plan_review", "ship it").status == "done"
+    with pytest.raises(Rejected, match="step is not claimed"):
+        svc.complete_step(AGENT_B, t.step_id, c.claim_token, "pass", [])
+    [run] = runs_of(store, tid, "plan_review")
+    assert (run.status, run.outcome) == ("completed", "superseded")
+    assert override_event(svc, tid).detail["cancelled_claim"] == "agent-b (codex)"
+
+
+def test_override_at_escalation_gate(svc, store):
+    tid = two_issues(svc)
+    assert svc.get_task(ME, tid).current_step == "plan_escalation"
+    assert svc.override_review(ME, tid, "plan_review", "fine").status == "done"
+    [gate] = runs_of(store, tid, "plan_escalation")
+    assert gate.outcome == "superseded"
+    e = override_event(svc, tid)
+    assert e.detail["verdicts"] == [{"outcome": "issues", "by": "local", "round": 1},
+                                    {"outcome": "issues", "by": "local", "round": 2}]
+    assert [(a["round"], a["commit"]) for a in e.detail["approved"]] == [(2, SHA2)]
+
+
+def test_override_during_plan_revision_approves_latest_completed_round(svc, store):
+    """Review Focus 3."""
+    tid = two_issues(svc)
+    svc.decide_gate(ME, tid, "plan_escalation", "reject", "try again")
+    t = svc.get_task(ME, tid)
+    assert (t.current_step, context(svc, tid).round) == ("plan", 3)
+    assert svc.override_review(ME, tid, "plan_review", "round 2 is fine").status == "done"
+    e = override_event(svc, tid)
+    assert e.step == "plan"
+    assert [(a["name"], a["round"], a["path"], a["commit"]) for a in e.detail["approved"]] == [
+        ("plan", 2, "docs/plan.md", SHA2)]
+    plans = runs_of(store, tid, "plan")
+    assert [(r.round, r.outcome) for r in plans] == [
+        (1, "completed"), (2, "completed"), (3, "superseded")]
+    assert [r.outcome for r in runs_of(store, tid, "plan_review")] == ["issues", "issues"]
+    assert [r.evidence for r in runs_of(store, tid, "plan_review")] == [
+        {"findings": "one"}, {"findings": "two"}]
+
+
+def test_override_before_any_review_is_rejected(svc):
+    tid = svc.create_task(ME, "T", "do it").id
+    work(svc, tid, "design_doc")
+    svc.decide_gate(ME, tid, None, "approve")
+    assert svc.get_task(ME, tid).current_step == "plan"
+    with pytest.raises(Rejected) as exc:
+        svc.override_review(ME, tid, "plan_review", "skip")
+    assert exc.value.reason == f"task {tid} has no review of plan to override"
+    e = override_event(svc, tid)
+    assert (e.result, e.reason) == ("rejected", exc.value.reason)
+
+
+def test_override_needs_approver_and_a_reason(svc):
+    tid = at_review(svc)
+    planner = Caller("p", frozenset({"planner"}))
+    with pytest.raises(Rejected) as exc:
+        svc.override_review(planner, tid, "plan_review", "mine")
+    assert exc.value.reason == "override_review requires role approver; you have planner"
+    with pytest.raises(Rejected, match="reason is required"):
+        svc.override_review(ME, tid, "plan_review", "  ")
+    with pytest.raises(Rejected, match="plan is not a review step"):
+        svc.override_review(ME, tid, "plan", "x")
+    assert svc.get_task(ME, tid).current_step == "plan_review"

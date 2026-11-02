@@ -112,6 +112,8 @@ def _event_detail(e: dict) -> str:
     d = e["detail"]
     if e["operation"] == "decide_gate":
         return ": ".join(x for x in (d.get("decision"), d.get("reason")) if x)
+    if e["operation"] == "override_review":
+        return f"override: {d.get('reason')}"
     if e["operation"] == "release_step":
         return f"{d.get('reason', '')}{' (force)' if d.get('force') else ''}"
     if e["operation"] == "complete_step":
@@ -177,10 +179,33 @@ def _request(ns) -> tuple[str, dict, object]:
         if ns.cmd == "reject":
             args["reason"], args["target"] = ns.reason, ns.to
         return "decide_gate", args, render_summary
+    if ns.cmd == "override":
+        args = {"task_id": ns.task, "reason": ns.reason, "review_step": ns.step}
+        return "override_review", args, render_summary
+    if ns.cmd == "review":
+        return "complete_step", {}, render_summary  # several calls: see _review
     if ns.cmd == "release":
         args = {"step_id": ns.step_id, "reason": ns.reason, "force": True}
         return "release_step", args, render_summary
     return "list_open_steps", {}, render_steps
+
+
+async def _review(url: str, ns, token: str) -> dict:
+    """`taktloop review`: claim the task's current review step and complete it with the verdict."""
+    task = await _call_tool(url, "get_task", {"task_id": ns.task}, token)
+    ctx = task["step_id"] and await _call_tool(url, "get_step_context", {"step_id": task["step_id"]}, token)
+    if not (ctx and ctx.get("review_of")):
+        raise ToolRejected(f"task {ns.task} is at {task['current_step']}, not at a review step")
+    claim = await _call_tool(url, "claim_step", {"step_id": task["step_id"]}, token)
+    args = {"step_id": claim["step_id"], "claim_token": claim["claim_token"],
+            "outcome": "pass" if ns.passed else "issues", "findings": ns.issues}
+    try:
+        return await _call_tool(url, "complete_step", args, token)
+    except ToolRejected:  # don't leave the step claimed until the lease runs out
+        release = {"step_id": claim["step_id"], "claim_token": claim["claim_token"],
+                   "reason": "taktloop review: verdict rejected"}
+        await _call_tool(url, "release_step", release, token)
+        raise
 
 
 def _serve(cfg) -> int:
@@ -249,7 +274,8 @@ def run_client(ns, cfg) -> int:
         return 2
     tool, args, render = _request(ns)
     try:
-        result = anyio.run(_call_tool, url, tool, args, _bearer(ns, cfg))
+        call = (_review, url, ns) if ns.cmd == "review" else (_call_tool, url, tool, args)
+        result = anyio.run(*call, _bearer(ns, cfg))
     except ToolRejected as e:
         print(f"rejected: {e}", file=sys.stderr)
         return 1

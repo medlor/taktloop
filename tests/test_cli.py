@@ -267,3 +267,68 @@ def test_reject_to_sends_target(monkeypatch):
     assert seen[0] == ("decide_gate", {"task_id": 1, "decision": "reject", "gate": None,
                                        "reason": "redo", "target": "design"})
     assert seen[1][1]["target"] is None
+
+
+def _fake_core(monkeypatch, step="plan_review", review_of="plan"):
+    seen = []
+
+    async def fake(url, name, args, token):
+        seen.append((name, args))
+        return {
+            "get_task": {"id": 3, "step_id": 7, "current_step": step},
+            "get_step_context": {"step_id": 7, "review_of": review_of},
+            "claim_step": {"step_id": 7, "claim_token": "tok"},
+        }.get(name, {"id": 3, "title": "T", "status": "active", "waiting_for": "x"})
+
+    monkeypatch.setattr(cli_commands, "_call_tool", fake)
+    return seen
+
+
+def test_review_issues_claims_then_completes(monkeypatch):
+    seen = _fake_core(monkeypatch)
+    assert cli.main(["--url", "http://x/mcp", "review", "3", "--issues", "x"]) == 0
+    assert [n for n, _ in seen] == ["get_task", "get_step_context", "claim_step", "complete_step"]
+    assert seen[2][1] == {"step_id": 7}
+    assert seen[3][1] == {"step_id": 7, "claim_token": "tok", "outcome": "issues", "findings": "x"}
+
+
+def test_review_pass(monkeypatch):
+    seen = _fake_core(monkeypatch)
+    assert cli.main(["--url", "http://x/mcp", "review", "3", "--pass"]) == 0
+    assert seen[-1][1] == {"step_id": 7, "claim_token": "tok", "outcome": "pass", "findings": None}
+
+
+def test_review_needs_a_review_step(monkeypatch, capsys):
+    seen = _fake_core(monkeypatch, step="plan", review_of=None)
+    assert cli.main(["--url", "http://x/mcp", "review", "3", "--pass"]) == 1
+    assert capsys.readouterr().err == "rejected: task 3 is at plan, not at a review step\n"
+    assert "claim_step" not in [n for n, _ in seen]
+
+
+def test_review_needs_pass_or_issues(capsys):
+    with pytest.raises(SystemExit):
+        cli.main(["--url", "http://x/mcp", "review", "3"])
+
+
+def test_override_sends_reason_and_step(monkeypatch):
+    seen = _fake_core(monkeypatch)
+    assert cli.main(["--url", "http://x/mcp", "override", "3", "--reason", "ok"]) == 0
+    assert seen[-1] == ("override_review", {"task_id": 3, "reason": "ok",
+                                            "review_step": "plan_review"})
+
+
+def test_review_releases_the_claim_when_the_verdict_is_rejected(monkeypatch, capsys):
+    seen = _fake_core(monkeypatch)
+    fake = cli_commands._call_tool
+
+    async def refuse_complete(url, name, args, token):
+        if name == "complete_step":
+            seen.append((name, args))
+            raise cli_commands.ToolRejected("findings are required for 'issues'")
+        return await fake(url, name, args, token)
+
+    monkeypatch.setattr(cli_commands, "_call_tool", refuse_complete)
+    assert cli.main(["--url", "http://x/mcp", "review", "3", "--issues", " "]) == 1
+    assert capsys.readouterr().err == "rejected: findings are required for 'issues'\n"
+    assert seen[-1] == ("release_step", {"step_id": 7, "claim_token": "tok",
+                                         "reason": "taktloop review: verdict rejected"})

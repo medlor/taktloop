@@ -9,7 +9,7 @@ from taktloop.ops_base import Caller, ServiceBase, _check_owner, _holder, _Ids
 from taktloop.permissions import require
 from taktloop.rules import Rejected, check_artifacts
 from taktloop.store import ArtifactRow, Tx
-from taktloop.workflow import DONE, Step
+from taktloop.workflow import Step
 
 
 class StepOps(ServiceBase):
@@ -57,10 +57,7 @@ class StepOps(ServiceBase):
                 target = self._after_issues(tx, run.task_id, step)
             else:
                 target = step.on_pass if outcome == "pass" else step.next
-            if target == DONE:
-                tx.set_task_status(run.task_id, "done")
-            else:
-                self._open_step(tx, run.task_id, target)
+            self._advance(tx, run.task_id, target)
             return self._summary(tx, tx.get_task(run.task_id))
         detail = {"step_id": step_id, "outcome": outcome,
                   "artifacts": [a.model_dump() for a in artifacts],
