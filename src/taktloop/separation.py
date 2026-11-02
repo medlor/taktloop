@@ -26,7 +26,8 @@ def approved_step(wf: Workflow, gate: Step | None, review: Step | None) -> str:
     names = list(wf.steps)
     before = reversed(names[:names.index(gate.name)])
     return next((n for n in before
-                 if wf.steps[n].kind == "agent" and not wf.steps[n].is_review), "")
+                 if wf.steps[n].kind == "agent" and not wf.steps[n].is_review
+                 and wf.steps[n].required_artifacts), "")
 
 
 def _refuse(steps: Iterable[str], subject: str, records: list[Record]) -> str | None:

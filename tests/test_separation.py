@@ -10,7 +10,7 @@ from taktloop.workflow import parse_workflow
 from test_service_review import ROOT
 
 WF = load_config(ROOT / "factory.yaml").workflow
-A, B, T = (Caller(s, frozenset(ALL_ROLES)) for s in ("agent-a", "agent-b", "tobias"))
+A, B, T = (Caller(s, frozenset((*ALL_ROLES, "builder", "verifier"))) for s in ("agent-a", "agent-b", "tobias"))
 
 
 def make(store, clock, separation):
@@ -140,3 +140,31 @@ def test_superseded_run_is_not_a_completion(store, clock):
     svc.override_review(B, tid, "plan_review", "round 1 is fine")
     assert svc.get_task(T, tid).current_step == "release"
     assert svc.decide_gate(A, tid, None, "approve").status == "done"
+
+
+def test_integration_gate_approves_build(store, clock):
+    wf = parse_workflow(yaml.safe_load("""
+start: build
+steps:
+  build: {kind: agent, role: builder, skill: s, output: {artifacts: [change]}, next: verify}
+  verify:
+    kind: agent
+    role: verifier
+    skill: s
+    evidence: [ci_run]
+    check: {mcp_server: github, tool: t, args: {}, expect: {ok: "yes"}}
+    next: gate
+    on_fail: build
+  gate: {kind: human_gate, role: approver, on_approve: done, on_reject: build}
+"""))
+    assert approved_step(wf, wf.step("gate"), None) == "build"
+    svc = Service(store, wf, clock=clock, separation="strict",
+                  checker=lambda server, tool, args: {"ok": "yes"})
+    tid = svc.create_task(A, "T").id
+    do(svc, A, tid, name="change")
+    sid = step_id(svc, tid)
+    c = svc.claim_step(B, sid)
+    svc.complete_step(B, sid, c.claim_token, "completed", [], evidence={"ci_run": "1"})
+    with pytest.raises(Rejected) as e:
+        svc.decide_gate(A, tid, "gate", "approve")
+    assert e.value.reason == f"strict separation: agent-a completed build round 1 of task {tid}"

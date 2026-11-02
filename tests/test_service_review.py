@@ -1,10 +1,12 @@
 from pathlib import Path
 
 import pytest
+import yaml
 
 from taktloop.config import load_config
 from taktloop.models import ArtifactIn
 from taktloop.service import Caller, Rejected, Service
+from taktloop.workflow import parse_workflow
 from conftest import ME, SHA
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -120,6 +122,33 @@ def test_issue_count_restarts_after_escalation_gate(svc):
     assert review(svc, tid, "issues", "three").current_step == "plan"
     work(svc, tid, "plan", SHA3)
     assert review(svc, tid, "issues", "four").current_step == "plan_escalation"
+
+
+def test_issue_count_restarts_after_pass(store, clock):
+    wf = parse_workflow(yaml.safe_load("""
+start: plan
+steps:
+  plan: {kind: agent, role: planner, skill: s, output: {artifacts: [plan]}, next: plan_review}
+  plan_review: {kind: agent, role: reviewer, skill: s, review_of: plan, on_pass: gate,
+                on_issues: plan, max_issue_rounds: 2, on_escalate: plan_escalation}
+  gate: {kind: human_gate, role: approver, on_approve: done, on_reject: plan}
+  plan_escalation: {kind: human_gate, role: approver, on_approve: done, on_reject: plan}
+"""))
+    svc = Service(store, wf, clock=clock)
+    tid = svc.create_task(ME, "T").id
+    work(svc, tid, "plan")
+    for outcome in ("issues", "pass"):
+        t = svc.get_task(ME, tid)
+        c = svc.claim_step(ME, t.step_id)
+        svc.complete_step(ME, t.step_id, c.claim_token, outcome, [], "f" if outcome == "issues" else None)
+        if outcome == "issues":
+            work(svc, tid, "plan", SHA2)
+    svc.decide_gate(ME, tid, "gate", "reject", "again")
+    work(svc, tid, "plan", SHA3)
+    t = svc.get_task(ME, tid)
+    c = svc.claim_step(ME, t.step_id)
+    s = svc.complete_step(ME, t.step_id, c.claim_token, "issues", [], "one")
+    assert s.current_step == "plan"
 
 
 def test_escalation_reject_to_design(svc):
