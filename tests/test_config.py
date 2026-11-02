@@ -41,3 +41,18 @@ def test_auth_block_is_required(tmp_path: Path, auth: str):
     path.write_text(WORKFLOW.replace("auth: {issuer: http://127.0.0.1:8766, audience: taktloop}\n", auth))
     with pytest.raises(WorkflowError, match="factory.yaml: 'auth' block with issuer and audience is required"):
         load_config(path)
+
+
+@pytest.mark.parametrize("line, want", [("", "off"), ("separation: off\n", "off"),
+                                        ("separation: strict\n", "strict")])
+def test_separation(tmp_path: Path, line: str, want: str):
+    path = tmp_path / "factory.yaml"
+    path.write_text(line + WORKFLOW)
+    assert load_config(path).separation == want
+
+
+def test_separation_rejects_other_values(tmp_path: Path):
+    path = tmp_path / "factory.yaml"
+    path.write_text("separation: loose\n" + WORKFLOW)
+    with pytest.raises(WorkflowError, match="separation"):
+        load_config(path)

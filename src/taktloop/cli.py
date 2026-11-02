@@ -44,6 +44,7 @@ def _parser() -> argparse.ArgumentParser:
     r.add_argument("task", type=int)
     r.add_argument("--reason", required=True)
     r.add_argument("--gate")
+    r.add_argument("--to", help="step to send the task back to (default: the gate's first)")
     rel = sub.add_parser("release", parents=client, help="force-release a claimed step")
     rel.add_argument("step_id", type=int)
     rel.add_argument("--force", action="store_true", required=True)

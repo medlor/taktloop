@@ -251,3 +251,19 @@ def test_serve_on_an_m1_database_says_delete_it(tmp_path, capsys):
     assert cli.main(["--config", str(cfg), "serve"]) == 2
     err = capsys.readouterr().err
     assert err.startswith("taktloop: ") and f"delete {db} to start fresh" in err
+
+
+def test_reject_to_sends_target(monkeypatch):
+    seen = []
+
+    async def fake(url, name, args, token):
+        seen.append((name, args))
+        return {"id": 1, "title": "T", "status": "active", "waiting_for": "x"}
+
+    monkeypatch.setattr(cli_commands, "_call_tool", fake)
+    base = ["--url", "http://x/mcp", "reject", "1", "--reason", "redo"]
+    assert cli.main(base + ["--to", "design"]) == 0
+    assert cli.main(base) == 0
+    assert seen[0] == ("decide_gate", {"task_id": 1, "decision": "reject", "gate": None,
+                                       "reason": "redo", "target": "design"})
+    assert seen[1][1]["target"] is None

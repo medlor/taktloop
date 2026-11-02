@@ -1,6 +1,7 @@
 """Pydantic result/input models shared by service, server and CLI."""
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -41,6 +42,14 @@ class Claim(BaseModel):
     lease_expires_at: datetime
 
 
+class Feedback(BaseModel):
+    """What reopened a step's current round: a gate rejection or a review's findings."""
+    kind: Literal["gate_rejection", "review_issues"]
+    text: str
+    by: str
+    at: datetime
+
+
 class StepContext(BaseModel):
     step_id: int
     task_id: int
@@ -51,7 +60,7 @@ class StepContext(BaseModel):
     instructions: str
     required_artifacts: list[str]
     round: int
-    rejection_reason: str | None
+    feedback: Feedback | None
     artifacts: list[Artifact]
 
 

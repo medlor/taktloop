@@ -191,6 +191,10 @@ class Tx:
             "SELECT * FROM step_runs WHERE task_id=? AND step=? ORDER BY id DESC LIMIT 1",
             (task_id, step))
 
+    def list_step_runs(self, task_id: int) -> list[StepRunRow]:
+        return self._all(StepRunRow, "SELECT * FROM step_runs WHERE task_id=? ORDER BY id",
+                         (task_id,))
+
     def step_runs_with_status(self, statuses: Collection[str]) -> list[StepRunRow]:
         statuses = list(statuses)
         return self._all(

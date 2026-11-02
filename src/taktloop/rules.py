@@ -42,15 +42,18 @@ def check_artifacts(required: Iterable[str], artifacts: list[ArtifactIn]) -> Non
 
 
 def waiting_for(step: Step | None, status: str = "open", claimed_by: str | None = None,
-                lease_expires_at: datetime | None = None) -> str:
-    """Spec 6.5 text for the current step run; step None means the task is done."""
+                lease_expires_at: datetime | None = None, escalated: Step | None = None) -> str:
+    """Spec 6.6 text for the current step run; step None means the task is done.
+    `escalated` is the review step whose escalation gate `step` is."""
     if step is None:
         return "done"
     if status == "claimed":
         until = lease_expires_at.astimezone(timezone.utc).strftime("%H:%M")
         return f"{step.name} in progress by {claimed_by}, lease until {until} UTC"
     if step.kind == "human_gate":
-        return f"waiting for {step.role} decision at {step.name}"
+        why = (f" ({escalated.review_of} failed review {escalated.max_issue_rounds} times)"
+               if escalated else "")
+        return f"waiting for {step.role} decision at {step.name}{why}"
     return f"waiting for a {step.role} to pick up {step.name}"
 
 

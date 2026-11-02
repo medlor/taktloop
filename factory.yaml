@@ -3,6 +3,7 @@ server: {host: 127.0.0.1, port: 8765}
 database: .taktloop/factory.db        # gitignored
 auth: {issuer: http://127.0.0.1:8766, audience: taktloop}
 cli: {identity: tobias}
+separation: off                      # off (default) | strict, see 6.4
 workflow:
   start: design
   steps:
@@ -30,4 +31,21 @@ workflow:
         execution mode and do not start executing.
       output:
         artifacts: [plan]
-      next: done                       # reserved name: the task is finished
+      next: plan_review
+    plan_review:
+      kind: agent
+      role: reviewer
+      skill: taktloop-plan-review
+      instructions: >
+        Review the plan against the approved design doc. Return pass or
+        issues with concrete findings. Do not edit the plan.
+      review_of: plan                # the step whose latest artifact is reviewed
+      on_pass: done
+      on_issues: plan                # reopens plan as round n+1 with the findings
+      max_issue_rounds: 2            # the 2nd 'issues' escalates instead
+      on_escalate: plan_escalation
+    plan_escalation:
+      kind: human_gate
+      role: approver
+      on_approve: done               # approve the plan anyway
+      on_reject: [plan, design]      # first entry is the default target

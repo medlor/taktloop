@@ -113,7 +113,8 @@ class ServiceBase:
             waiting_for=waiting_for(
                 self._wf.step(run.step) if run else None,
                 run.status if run else "open", _holder(run) if run else None,
-                run.lease_expires_at if run else None))
+                run.lease_expires_at if run else None,
+                self._wf.escalating_review(run.step) if run else None))
 
     def _open_step(self, tx: Tx, task_id: int, step: str) -> int:
         last = tx.last_step_run(task_id, step)

@@ -50,7 +50,7 @@ def test_parses_mvp_workflow():
     gate = wf.step("design_approval")
     assert gate.kind == "human_gate"
     assert gate.on_approve == "plan"
-    assert gate.on_reject == "design"
+    assert gate.on_reject == ("design",)
     assert gate.skill is None and gate.next is None
     assert gate.required_artifacts == ()
     assert wf.step("plan").next == DONE
@@ -116,4 +116,88 @@ def test_step_named_done_is_reserved():
     data = mvp()
     data["steps"]["done"] = data["steps"]["plan"]
     with pytest.raises(WorkflowError, match="done"):
+        parse_workflow(data)
+
+
+REVIEW = yaml.safe_load(
+    """
+plan_review:
+  kind: agent
+  role: reviewer
+  skill: taktloop-plan-review
+  instructions: >
+    Review the plan against the approved design doc. Return pass or
+    issues with concrete findings. Do not edit the plan.
+  review_of: plan
+  on_pass: done
+  on_issues: plan
+  max_issue_rounds: 2
+  on_escalate: plan_escalation
+plan_escalation:
+  kind: human_gate
+  role: approver
+  on_approve: done
+  on_reject: [plan, design]
+"""
+)
+
+
+def reviewed():
+    data = mvp()
+    data["steps"]["plan"]["next"] = "plan_review"
+    data["steps"].update(copy.deepcopy(REVIEW))
+    return data
+
+
+def test_parses_review_workflow():
+    wf = parse_workflow(reviewed())
+    r = wf.step("plan_review")
+    assert r.is_review and not wf.step("plan").is_review
+    assert (r.review_of, r.on_pass, r.on_issues, r.max_issue_rounds, r.on_escalate) == (
+        "plan", DONE, "plan", 2, "plan_escalation")
+    assert r.required_artifacts == () and r.next is None
+    assert wf.step("plan_escalation").on_reject == ("plan", "design")
+    assert wf.step("design_approval").on_reject == ("design",)
+    assert set(r.targets) >= {"plan", DONE, "plan_escalation"}
+
+
+@pytest.mark.parametrize("drop", ["review_of", "on_pass", "on_issues"])
+def test_review_step_needs_review_of_on_pass_on_issues(drop):
+    data = reviewed()
+    del data["steps"]["plan_review"][drop]
+    with pytest.raises(WorkflowError) as exc:
+        parse_workflow(data)
+    assert str(exc.value) == "step 'plan_review': review steps need review_of, on_pass and on_issues"
+
+
+@pytest.mark.parametrize("drop", ["max_issue_rounds", "on_escalate"])
+def test_max_issue_rounds_and_on_escalate_go_together(drop):
+    data = reviewed()
+    del data["steps"]["plan_review"][drop]
+    with pytest.raises(WorkflowError) as exc:
+        parse_workflow(data)
+    assert str(exc.value) == "step 'plan_review': max_issue_rounds and on_escalate go together"
+
+
+@pytest.mark.parametrize("target", ["design_approval", "plan_review", "ghost"])
+def test_review_of_must_name_an_agent_work_step(target):
+    data = reviewed()
+    data["steps"]["plan_review"]["review_of"] = target
+    with pytest.raises(WorkflowError) as exc:
+        parse_workflow(data)
+    assert str(exc.value) == "step 'plan_review': review_of must name an agent work step"
+
+
+@pytest.mark.parametrize("extra", [{"next": "done"}, {"output": {"artifacts": ["x"]}}])
+def test_review_step_has_no_output_or_next(extra):
+    data = reviewed()
+    data["steps"]["plan_review"].update(extra)
+    with pytest.raises(WorkflowError, match="plan_review"):
+        parse_workflow(data)
+
+
+def test_on_reject_list_targets_must_exist():
+    data = reviewed()
+    data["steps"]["plan_escalation"]["on_reject"] = ["plan", "nowhere"]
+    with pytest.raises(WorkflowError, match="nowhere"):
         parse_workflow(data)

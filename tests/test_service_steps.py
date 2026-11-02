@@ -237,7 +237,7 @@ def test_design_step_context(svc):
     assert ctx.request == "do it" and ctx.skill == "brainstorming"
     assert ctx.instructions.startswith("Run brainstorming")
     assert ctx.required_artifacts == ["design_doc"]
-    assert ctx.round == 1 and ctx.rejection_reason is None and ctx.artifacts == []
+    assert ctx.round == 1 and ctx.feedback is None and ctx.artifacts == []
 
 
 def test_concurrent_claims_one_winner(tmp_path):

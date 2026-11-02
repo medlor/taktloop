@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 import yaml
 
@@ -19,6 +20,7 @@ class FactoryConfig:
     auth_issuer: str
     auth_audience: str
     cli_identity: str | None = None
+    separation: Literal["off", "strict"] = "off"
 
     @property
     def url(self) -> str:
@@ -34,6 +36,10 @@ def load_config(path: Path) -> FactoryConfig:
     auth = data.get("auth")
     if not isinstance(auth, dict) or not auth.get("issuer") or not auth.get("audience"):
         raise WorkflowError(f"{path.name}: 'auth' block with issuer and audience is required")
+    separation = data.get("separation", "off")
+    separation = "off" if separation is False else separation  # YAML reads a bare off as False
+    if separation not in ("off", "strict"):
+        raise WorkflowError(f"{path.name}: separation must be 'off' or 'strict'")
     return FactoryConfig(
         factory=str(data.get("factory") or path.resolve().parent.name),
         host=str(server.get("host", "127.0.0.1")),
@@ -44,4 +50,5 @@ def load_config(path: Path) -> FactoryConfig:
         auth_issuer=str(auth["issuer"]),
         auth_audience=str(auth["audience"]),
         cli_identity=(data.get("cli") or {}).get("identity"),
+        separation=separation,
     )

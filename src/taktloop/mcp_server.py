@@ -108,11 +108,15 @@ def build_server(service: Service, factory: str, verifier: JwtVerifier | None,
         ctx: Context,
         step_id: int,
         claim_token: str,
-        artifacts: list[ArtifactIn],
+        artifacts: list[ArtifactIn] | None = None,
         outcome: str = "completed",
+        findings: str | None = None,
     ) -> TaskSummary:
-        """Complete a claimed step with its artifacts (repo-relative path, full commit SHA, branch)."""
-        return service.complete_step(caller(ctx), step_id, claim_token, outcome, artifacts)
+        """Complete a claimed step. Work steps: outcome 'completed' with artifacts (repo-relative
+        path, full commit SHA, branch). Review steps: outcome 'pass' or 'issues', no artifacts,
+        findings required for 'issues'."""
+        return service.complete_step(caller(ctx), step_id, claim_token, outcome, artifacts or [],
+                                     findings)
 
     @tool
     def release_step(
@@ -132,8 +136,10 @@ def build_server(service: Service, factory: str, verifier: JwtVerifier | None,
         decision: Literal["approve", "reject"],
         gate: str | None = None,
         reason: str | None = None,
+        target: str | None = None,
     ) -> TaskSummary:
-        """Approve or reject the human gate a task is waiting at."""
-        return service.decide_gate(caller(ctx), task_id, gate, decision, reason)
+        """Approve or reject the human gate a task is waiting at; a reject goes back to
+        `target` (one of the gate's on_reject steps, default the first)."""
+        return service.decide_gate(caller(ctx), task_id, gate, decision, reason, target)
 
     return server

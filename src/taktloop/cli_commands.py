@@ -175,7 +175,7 @@ def _request(ns) -> tuple[str, dict, object]:
     if ns.cmd in ("approve", "reject"):
         args = {"task_id": ns.task, "decision": ns.cmd, "gate": ns.gate}
         if ns.cmd == "reject":
-            args["reason"] = ns.reason
+            args["reason"], args["target"] = ns.reason, ns.to
         return "decide_gate", args, render_summary
     if ns.cmd == "release":
         args = {"step_id": ns.step_id, "reason": ns.reason, "force": True}
