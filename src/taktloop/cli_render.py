@@ -27,10 +27,13 @@ def _event_detail(e: dict) -> str:
         return f"override: {d.get('reason')}"
     if e["operation"] == "release_step":
         return f"{d.get('reason', '')}{' (force)' if d.get('force') else ''}"
-    if e["operation"] == "complete_step" and d.get("outcome") in ("pass", "issues"):
+    if e["operation"] == "check":
+        return f"{d['result']}: {d['summary']}"
+    if e["operation"] == "complete_step" and d.get("outcome") in ("pass", "issues", "failed"):
         return f"{d['outcome']} → {d.get('next', '?')}"
     if e["operation"] == "complete_step":
-        return ", ".join(a["name"] for a in d.get("artifacts", []))
+        return ", ".join([a["name"] for a in d.get("artifacts", [])]
+                         + [f"{k}={v}" for k, v in (d.get("evidence") or {}).items()])
     return ""
 
 

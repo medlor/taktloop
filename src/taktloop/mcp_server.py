@@ -111,12 +111,14 @@ def build_server(service: Service, factory: str, verifier: JwtVerifier | None,
         artifacts: list[ArtifactIn] | None = None,
         outcome: str = "completed",
         findings: str | None = None,
+        evidence: dict[str, str] | None = None,
     ) -> TaskSummary:
         """Complete a claimed step. Work steps: outcome 'completed' with artifacts (repo-relative
         path, full commit SHA, branch). Review steps: outcome 'pass' or 'issues', no artifacts,
-        findings required for 'issues'."""
+        findings required for 'issues'. Steps with a check: outcome 'completed' with evidence
+        (for example {"ci_run": "<run id>"}); the core checks the result itself."""
         return service.complete_step(caller(ctx), step_id, claim_token, outcome, artifacts or [],
-                                     findings)
+                                     findings, evidence)
 
     @tool
     def release_step(

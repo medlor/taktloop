@@ -384,3 +384,42 @@ def test_token_with_schemeless_issuer_is_a_message_not_a_traceback(tmp_path, cap
     assert cli.main(["token", "x", "--credentials", str(tmp_path)]) == 2
     err = capsys.readouterr().err
     assert err.startswith("taktloop: ") and "is not an http(s) URL" in err and "Traceback" not in err
+
+
+def test_check_events_and_failed_completions_render():
+    d = dict(DETAIL)
+    d["history"] = [
+        {"at": "2026-11-02T09:05:00Z", "subject": "core", "roles": [], "executor": None,
+         "operation": "check", "step": "verify", "result": "ok", "reason": None,
+         "detail": {"server": "github", "tool": "actions_get", "args": {}, "observed": {},
+                    "result": "fail",
+                    "summary": "github.actions_get (ci_run=12345): workflow_run.conclusion is failure, expected success"}},
+        {"at": "2026-11-02T09:05:00Z", "subject": "agent-a", "roles": [], "executor": None,
+         "operation": "complete_step", "step": "verify", "result": "ok", "reason": None,
+         "detail": {"outcome": "failed", "artifacts": [], "evidence": {"ci_run": "12345"},
+                    "next": "build"}},
+        {"at": "2026-11-02T09:06:00Z", "subject": "agent-a", "roles": [], "executor": None,
+         "operation": "complete_step", "step": "build", "result": "ok", "reason": None,
+         "detail": {"outcome": "completed", "evidence": {"ci_run": "7", "x": "y"},
+                    "artifacts": [{"name": "code"}], "next": "verify"}},
+    ]
+    rows = cli_commands.render_task_detail(d).splitlines()[-3:]
+    assert rows[0].endswith("ok  fail: github.actions_get (ci_run=12345): "
+                            "workflow_run.conclusion is failure, expected success")
+    assert rows[1].endswith("ok  failed → build")
+    assert rows[2].endswith("ok  code, ci_run=7, x=y")
+
+
+def test_serve_warns_once_per_server_without_a_credential(monkeypatch, caplog):
+    from taktloop import serve
+    from taktloop.external import ExternalServer
+    cfg = type("C", (), {"mcp_servers": {"github": ExternalServer("github", "u", "TAKTLOOP_GITHUB_TOKEN"),
+                                         "ok": ExternalServer("ok", "u", "TAKTLOOP_OK_TOKEN")},
+                         "env_file": Path("/nonexistent/.env")})()
+    monkeypatch.delenv("TAKTLOOP_GITHUB_TOKEN", raising=False)
+    monkeypatch.setenv("TAKTLOOP_OK_TOKEN", "secret")
+    with caplog.at_level("WARNING", logger="taktloop"):
+        serve.build_checker(cfg)
+    assert [r.getMessage() for r in caplog.records] == [
+        "no credential for github: set TAKTLOOP_GITHUB_TOKEN in the environment or in .env; "
+        "checks against it will be refused"]

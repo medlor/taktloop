@@ -119,3 +119,13 @@ async def test_override_review_tool_defaults_to_plan_review(client_for):
                                                   "reason": "skip"})
     assert r.is_error
     assert r.content[0].text.endswith("plan_review is not a review step")  # the default step
+
+
+async def test_complete_step_passes_evidence_to_the_service(monkeypatch, client_for):
+    seen = []
+    monkeypatch.setattr(mcp_server.Service, "complete_step",
+                        lambda self, *a: seen.append(a) or None)
+    async with client_for() as c:
+        await c.call_tool("complete_step", {"step_id": 1, "claim_token": "t", "outcome": "completed",
+                                            "evidence": {"ci_run": "12345"}})
+    assert seen[0][1:] == (1, "t", "completed", [], None, {"ci_run": "12345"})
