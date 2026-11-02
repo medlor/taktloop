@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import secrets
 
+from taktloop.checks import CheckDecl, CheckUnavailable, Mismatch, compare, describe, resolve
 from taktloop.models import ArtifactIn, Claim, TaskSummary
-from taktloop.ops_base import Caller, ServiceBase, _check_owner, _holder, _Ids
+from taktloop.ops_base import CORE, Caller, ServiceBase, _check_owner, _holder, _Ids
 from taktloop.permissions import require
-from taktloop.rules import Rejected, check_artifacts
+from taktloop.rules import Rejected, check_artifacts, latest_rounds
 from taktloop.separation import check_claim
 from taktloop.store import ArtifactRow, Tx
 from taktloop.workflow import Step
@@ -39,9 +40,26 @@ class StepOps(ServiceBase):
         return self._run(caller, "heartbeat", {"step_id": step_id}, body)
 
     def complete_step(self, caller: Caller, step_id: int, claim_token: str, outcome: str,
-                      artifacts: list[ArtifactIn], findings: str | None = None) -> TaskSummary:
+                      artifacts: list[ArtifactIn], findings: str | None = None,
+                      evidence: dict[str, str] | None = None) -> TaskSummary:
         """Work steps: outcome `completed` with artifacts. Review steps: `pass` or `issues`,
-        no artifacts, findings required for `issues`."""
+        no artifacts, findings required for `issues`. Steps with a check need evidence (_check)."""
+        evidence = evidence or {}
+
+        def validate(tx: Tx, ids: _Ids) -> tuple[int, CheckDecl | None]:
+            run = self._load_owned(tx, ids, caller, "complete_step", step_id, claim_token)
+            step = self._wf.step(run.step)
+            _check_evidence(step.evidence, evidence)
+            if step.check is None:
+                return run.task_id, None
+            if outcome != "completed":
+                raise Rejected(f"outcome must be 'completed', got {outcome!r}")
+            arts = {a.name: a for a in latest_rounds(self._artifacts(tx, run.task_id))}
+            try:
+                return run.task_id, resolve(step.check, evidence, arts)
+            except CheckUnavailable as e:
+                raise Rejected(f"CI check could not run: {e}") from None
+
         def body(tx: Tx, ids: _Ids) -> TaskSummary:
             run = self._load_owned(tx, ids, caller, "complete_step", step_id, claim_token)
             step = self._wf.step(run.step)
@@ -49,17 +67,20 @@ class StepOps(ServiceBase):
                 _check_verdict(outcome, artifacts, detail["findings"])
             elif outcome != "completed":
                 raise Rejected(f"outcome must be 'completed', got {outcome!r}")
+            if found[0]:  # the evidence names the wrong run, or one not finished yet
+                raise Rejected("; ".join(describe(m) for m in found[0]))
             check_artifacts(step.required_artifacts, artifacts)
             for a in artifacts:
                 tx.insert_artifact(ArtifactRow(run.task_id, run.id, a.name, a.path, a.commit,
                                                a.branch))
-            evidence = {"findings": detail["findings"]} if detail["findings"] else None
-            tx.update_step_run(run.id, status="completed", outcome=outcome, evidence=evidence,
-                               closed_at=self._clock())
+            stored = {**evidence, **({"findings": f} if (f := detail["findings"]) else {})}
+            tx.update_step_run(run.id, status="completed", evidence=stored or None,
+                               outcome="failed" if found[1] else outcome, closed_at=self._clock())
             if outcome == "issues":
                 target = self._after_issues(tx, run.task_id, step)
             else:
                 target = step.on_pass if outcome == "pass" else step.next
+            target = step.on_fail if found[1] else target
             detail["next"] = target
             opened = self._advance(tx, run.task_id, target)
             if outcome == "issues" and target == step.on_escalate:
@@ -69,8 +90,37 @@ class StepOps(ServiceBase):
             return self._summary(tx, tx.get_task(run.task_id))
         detail = {"step_id": step_id, "outcome": outcome,
                   "artifacts": [a.model_dump() for a in artifacts],
-                  "findings": findings.strip() if findings and findings.strip() else None}
+                  "findings": findings.strip() if findings and findings.strip() else None,
+                  "evidence": evidence or None}
+        task_id, decl = self._run(caller, "complete_step", detail, validate, writes=False)
+        found = ([], []) if decl is None else self._check(caller, task_id, step_id, decl,
+                                                          evidence, detail)
         return self._run(caller, "complete_step", detail, body)
+
+    def _check(self, caller: Caller, task_id: int, step_id: int, decl: CheckDecl,
+               evidence: dict[str, str], detail: dict) -> tuple[list[Mismatch], list[Mismatch]]:
+        """Run the check between transactions and record it: (match, expect) mismatches.
+        Not runnable -> refused; the apply transaction re-checks the claim."""
+        try:
+            if self._checker is None:
+                raise CheckUnavailable("no checker configured")
+            result = self._checker(decl.mcp_server, decl.tool, dict(decl.args))
+        except CheckUnavailable as e:
+            def refuse(tx: Tx, ids: _Ids) -> None:
+                ids.task_id, ids.step_run_id = task_id, step_id
+                raise Rejected(f"CI check could not run: {e}")
+            return self._run(caller, "complete_step", detail, refuse)
+        found = compare(decl.match, result), compare(decl.expect, result)
+        shown, got = found[0] or found[1], {m.field: m.got for m in found[0] + found[1]}
+        ran = ", ".join(f"{k}={v}" for k, v in evidence.items())
+        with self._store.transaction() as tx:
+            self._event(tx, CORE, "check", _Ids(task_id, step_id), {
+                "server": decl.mcp_server, "tool": decl.tool, "args": dict(decl.args),
+                "observed": {**decl.match, **decl.expect, **got},
+                "result": "mismatch" if found[0] else "fail" if found[1] else "pass",
+                "summary": f"{decl.mcp_server}.{decl.tool} ({ran}): "
+                           f"{'; '.join(describe(m) for m in shown) or 'pass'}"})
+        return found
 
     def _after_issues(self, tx: Tx, task_id: int, review: Step) -> str:
         """on_escalate once this review step has max_issue_rounds `issues` verdicts since the
@@ -102,6 +152,14 @@ class StepOps(ServiceBase):
             return self._summary(tx, tx.get_task(run.task_id))
         detail = {"step_id": step_id, "reason": reason, "force": force}
         return self._run(caller, "release_step", detail, body)
+
+
+def _check_evidence(keys: tuple[str, ...], evidence: dict[str, str]) -> None:
+    if not keys and evidence:
+        raise Rejected("this step takes no evidence")
+    if keys and (set(evidence) != set(keys) or not all(
+            isinstance(v, str) and v.strip() for v in evidence.values())):
+        raise Rejected(f"evidence must be exactly: {', '.join(keys)}")
 
 
 def _check_verdict(outcome: str, artifacts: list[ArtifactIn], findings: str | None) -> None:

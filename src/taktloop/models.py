@@ -43,8 +43,8 @@ class Claim(BaseModel):
 
 
 class Feedback(BaseModel):
-    """What reopened a step's current round: a gate rejection or a review's findings."""
-    kind: Literal["gate_rejection", "review_issues"]
+    """What reopened a step's current round: a gate rejection, review findings, a red check."""
+    kind: Literal["gate_rejection", "review_issues", "check_failed"]
     text: str
     by: str
     at: datetime

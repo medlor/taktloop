@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from taktloop.external import Checker
 from taktloop.models import Artifact, Claim, TaskSummary
 from taktloop.permissions import require
 from taktloop.rules import Rejected, same_token, waiting_for
@@ -49,9 +50,10 @@ def _utc_now() -> datetime:
 class ServiceBase:
     def __init__(self, store: Store, workflow: Workflow,
                  lease: timedelta = timedelta(minutes=30),
-                 clock: Callable[[], datetime] = _utc_now, separation: str = "off") -> None:
+                 clock: Callable[[], datetime] = _utc_now, separation: str = "off",
+                 checker: Checker | None = None) -> None:
         self._store, self._wf, self._lease, self._clock = store, workflow, lease, clock
-        self._separation = separation
+        self._separation, self._checker = separation, checker
 
     # --- shared helpers -------------------------------------------------
 

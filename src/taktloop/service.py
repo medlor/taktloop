@@ -75,11 +75,15 @@ class Service(StepOps, GateOps):
 
 
 def _feedback(tx: Tx, run: StepRunRow) -> Feedback | None:
-    """The gate rejection or review findings whose event opened this run (it closed the run
-    just before it in the task), or None."""
+    """The gate rejection, review findings or red check whose event opened this run (it closed
+    the run just before it in the task), or None."""
     before = [r for r in tx.list_step_runs(run.task_id) if r.id < run.id]
-    if not before or before[-1].outcome not in ("rejected", "issues"):
+    if not before or before[-1].outcome not in ("rejected", "issues", "failed"):
         return None
+    if before[-1].outcome == "failed":  # the last red check of that run
+        e = [e for e in tx.list_events(run.task_id) if e.step_run_id == before[-1].id
+             and e.operation == "check" and e.detail["result"] == "fail"][-1]
+        return Feedback(kind="check_failed", text=e.detail["summary"], by=e.subject, at=e.at)
     for e in tx.list_events(run.task_id):
         if e.step_run_id == before[-1].id and e.result == "ok" and e.operation in (
                 "decide_gate", "complete_step"):
