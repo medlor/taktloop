@@ -221,7 +221,8 @@ def _serve(cfg) -> int:
 
 
 def _install_skill(dest: Path) -> int:
-    shutil.copytree(TEMPLATES / "mvp" / "skills" / "taktloop", dest, dirs_exist_ok=True)
+    """Copy both skills (the bridge and taktloop-plan-review) into dest, one directory each."""
+    shutil.copytree(TEMPLATES / "mvp" / "skills", dest, dirs_exist_ok=True)
     print(dest)
     return 0
 

@@ -47,9 +47,10 @@ def test_core_down_message_and_exit_code(capsys):
     assert err == f"taktloop core not reachable at {url} — start it with `uv run taktloop serve`\n"
 
 
-def test_install_skill_copies_bridge_skill(tmp_path):
+def test_install_skill_copies_both_skills(tmp_path):
     assert cli.main(["install-skill", "--dest", str(tmp_path / "s")]) == 0
-    assert (tmp_path / "s" / "SKILL.md").exists()
+    assert (tmp_path / "s" / "taktloop" / "SKILL.md").exists()
+    assert (tmp_path / "s" / "taktloop-plan-review" / "SKILL.md").exists()
 
 
 def test_rejection_exit_code(monkeypatch, capsys):

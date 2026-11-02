@@ -68,8 +68,8 @@ def _parser() -> argparse.ArgumentParser:
     t = sub.add_parser("token", help="print a dev-issuer token for an identity")
     t.add_argument("identity")
     t.add_argument("--credentials", type=Path, default=Path(".taktloop/credentials"))
-    s = sub.add_parser("install-skill", parents=[shared], help="copy the bridge skill into a project")
-    s.add_argument("--dest", type=Path, default=Path(".claude/skills/taktloop"))
+    s = sub.add_parser("install-skill", parents=[shared], help="copy the taktloop skills into a project")
+    s.add_argument("--dest", type=Path, default=Path(".claude/skills"))
     return p
 
 
