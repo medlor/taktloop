@@ -40,9 +40,9 @@ def credential(server: ExternalServer, environ: Mapping[str, str], dotenv: Mappi
 def make_checker(servers: Mapping[str, ExternalServer], environ: Mapping[str, str],
                  dotenv: Mapping[str, str], timeout: float = 30.0) -> Checker:
     async def call(server: ExternalServer, token: str, tool: str, args: dict) -> dict:
-        http = create_mcp_http_client(headers={"Authorization": f"Bearer {token}"})
         with anyio.fail_after(timeout):
-            async with Client(streamable_http_client(server.url, http_client=http)) as client:
+            async with create_mcp_http_client(headers={"Authorization": f"Bearer {token}"}) as http, \
+                    Client(streamable_http_client(server.url, http_client=http)) as client:
                 result = await client.call_tool(tool, args)
         if result.is_error:
             raise CheckUnavailable(result.content[0].text if result.content else "unknown error")

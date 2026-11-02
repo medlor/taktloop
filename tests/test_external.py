@@ -56,3 +56,12 @@ def test_external_timeout(fake_github):
     url, _ = fake_github
     with pytest.raises(CheckUnavailable, match="github did not answer within"):
         _checker(url, timeout=0.2)("github", "sleepy", {"seconds": "1"})
+
+
+def test_external_checker_closes_its_http_client(fake_github, monkeypatch):
+    import taktloop.external as external
+
+    made, real = [], external.create_mcp_http_client
+    monkeypatch.setattr(external, "create_mcp_http_client", lambda **kw: made.append(real(**kw)) or made[-1])
+    _checker(fake_github[0])("github", "actions_get", ARGS)
+    assert made and all(c.is_closed for c in made)
