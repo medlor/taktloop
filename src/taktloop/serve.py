@@ -36,11 +36,33 @@ def _cancelled(record: logging.LogRecord) -> bool:
     return bool(record.exc_info) and isinstance(record.exc_info[1], asyncio.CancelledError)
 
 
+def _log_unauthenticated(app):
+    """ASGI wrapper: one WARNING per 401 with the reason and the client address."""
+    log = logging.getLogger("taktloop.auth")
+
+    async def wrapped(scope, receive, send):
+        async def watch(message):
+            if message["type"] == "http.response.start" and message["status"] == 401:
+                bearer = any(k == b"authorization" for k, _ in scope.get("headers", []))
+                host, port = scope.get("client") or ("?", 0)
+                log.warning("401 for %s:%s %s: %s", host, port, scope.get("path"),
+                            "bearer token refused" if bearer else "no bearer token")
+            await send(message)
+
+        await app(scope, receive, watch if scope["type"] == "http" else send)
+
+    return wrapped
+
+
 def run(cfg: FactoryConfig) -> None:
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    logging.getLogger("taktloop").addHandler(handler)
     cfg.database.parent.mkdir(parents=True, exist_ok=True)
     service = Service(Store(cfg.database), cfg.workflow, timedelta(minutes=cfg.lease_minutes))
     verifier = JwtVerifier(cfg.auth_issuer, cfg.auth_audience)
-    app = build_server(service, cfg.factory, verifier, cfg.url).streamable_http_app(host=cfg.host)
+    app = _log_unauthenticated(
+        build_server(service, cfg.factory, verifier, cfg.url).streamable_http_app(host=cfg.host))
     # Not MCPServer.run(): it sets no graceful-shutdown timeout, and on Python >= 3.12
     # shutdown then waits forever for a client that keeps a request open (Claude
     # Code does). After the timeout, uvicorn cancels those requests.

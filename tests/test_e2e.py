@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import signal
 import socket
 import subprocess
@@ -163,7 +164,11 @@ def test_request_without_token_gets_401(core):
     r = httpx2.post(core.url, json={"jsonrpc": "2.0", "id": 1, "method": "ping"},
                     headers={"Accept": "application/json, text/event-stream", "Authorization": "Bearer junk"})
     assert r.status_code == 401
-    assert "bearer token refused" in (core.dir / f"err{core.runs}.log").read_text()
+    log = (core.dir / f"err{core.runs}.log").read_text()
+    stamp = r"\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d+ WARNING taktloop.auth: "
+    assert re.search(stamp + r"401 for 127\.0\.0\.1:\d+ /mcp: no bearer token", log), log
+    assert re.search(stamp + r"401 for 127\.0\.0\.1:\d+ /mcp: bearer token refused", log), log
+    assert re.search(stamp + r"bearer token refused: ", log), log
 
 
 def test_ctrl_c_stops_core_with_an_open_connection(core):
