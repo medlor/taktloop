@@ -6,8 +6,9 @@ description: Use when the user says "work on taktloop" or asks you to pick up, c
 # taktloop bridge
 
 taktloop is a task core you reach through MCP tools. A task moves through steps
-(for example design, then a human approval gate, then plan). You run **exactly
-one step** per session, hand back its artifacts, and stop.
+(for example design, then a human approval gate, then plan, then workspace,
+build, code review, verify and integrate). You run **exactly one step** per
+session, hand back its artifacts, and stop.
 
 ## Setup
 
@@ -52,6 +53,10 @@ runs as one identity (for example `agent-a`) and is started like this:
      reason a gate rejected the previous result (`kind: gate_rejection`) or a
      reviewer's findings (`kind: review_issues`), given by `feedback.by`. Read
      the earlier artifact, address every point, and produce a revised version.
+     `kind: check_failed` (by `core`) names a CI run that failed on your
+     change: find and fix the cause.
+   - Code steps (`workspace`, `build`, `verify`, `integrate`, and reviews of
+     `build`) have extra rules: see "Code steps" below.
    - If `review_of` is set, this is a **review step**: run the skill the
      context names (for example `taktloop-plan-review`) on the latest
      artifact of that step. Never edit the reviewed artifact. Skip steps 5
@@ -74,14 +79,54 @@ runs as one identity (for example `agent-a`) and is started like this:
    - Commit each final artifact on the current branch (after the review).
    - Call `complete_step(step_id, claim_token, artifacts=[...])` with one entry
      per required artifact: `name` (as listed in `required_artifacts`), `path`
-     (repo-relative), `commit` (the full 40-character SHA from
-     `git rev-parse HEAD`) and `branch` (from `git branch --show-current`).
+     (repo-relative; `"."` for an artifact that is a commit, not a file),
+     `commit` (the full 40-character SHA from `git rev-parse HEAD`) and
+     `branch` (from `git branch --show-current`).
    - A rejected completion (bad path, short SHA, missing artifact, wrong
      token) changes nothing. Read the reason, fix it, and call again. If the
      reason says the step is not claimed, see "Long sessions and failure".
 7. **Stop.** After `complete_step` succeeds, say what the task is now waiting
    for (the result names the next step and role), then end your work. Do not
    claim another step.
+
+## Code steps
+
+After the plan passes review, the task goes on to code on its own branch of
+this repository. These artifacts are commits, not files: their `path` is
+`"."` and their `commit` is the commit that matters.
+
+- **workspace** (`workspace` artifact): create the task branch from
+  `origin/main`, check the tests pass, push the branch to `origin`. `commit`
+  is the base commit.
+- **build** (`change` artifact): implement the plan on the task branch,
+  commit, and **push the branch before completing**. `commit` is the pushed
+  branch head. Do not merge and do not open a pull request.
+- **Review of build** (`review_of` is `build`): review
+  `git diff <workspace.commit>..<change.commit>` (the latest round of each
+  in `artifacts`) against the plan. Do not edit code.
+- **verify** (no artifacts, evidence instead): run the tests locally on the
+  change commit. Then find the GitHub Actions run of that commit with
+  `gh run list --commit <change sha>`, wait until it has finished
+  (`gh run watch <id>`), and complete with the run id as evidence:
+
+      complete_step(step_id, claim_token, evidence={"ci_run": "<run id>"})
+
+  The core asks GitHub itself whether that run is green; you only name the
+  run. **Never state a result**, and never complete with a run you have not
+  checked belongs to the change commit.
+  - Refused with `status is in_progress, expected completed`: the run is not
+    finished. Wait and call again with the same run.
+  - Refused with `head_sha is ..., expected ...`: you named the wrong run (an
+    older commit). Find the run of the change commit.
+  - Refused with "CI check could not run": report the reason to the user and
+    stop, keeping the claim, or release the step.
+  - A red run is not refused: the step closes as failed, the task goes back
+    to `build` with the run as `check_failed` feedback. Stop as usual.
+- **integrate** (`merge` artifact), after the approver approved at
+  `integration_approval`: merge the **change commit** (not the branch tip)
+  into `main`, push `main` to `origin`, and complete with the merge commit
+  (`path` `"."`, `branch` `main`). Do not ask which option to take; the
+  approver decided "merge". **Never force-push.**
 
 ## Approval gates
 
@@ -98,6 +143,9 @@ such as `plan_escalation`), tell the user the approver's options there:
     uv run taktloop approve <task_id>                       # approve the latest plan anyway
     uv run taktloop override <task_id> --reason "..."      # same result, recorded as an override
     uv run taktloop reject <task_id> --to plan --reason "..."    # or --to design
+
+The same holds for `build_escalation` (`--to build` or `--to plan`) and for
+`integration_approval`, the gate before `integrate`.
 
 An approver can also `override` a plan review at any earlier point (while the
 review is open or claimed, or during a revision round). They can do all of

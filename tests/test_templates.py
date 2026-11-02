@@ -44,6 +44,13 @@ def test_bridge_skill_m2():
     assert "rejection_reason" not in text
 
 
+def test_bridge_skill_m3a():
+    text = SKILL.read_text()
+    for word in ("evidence", "ci_run", "gh run list --commit", "check_failed", "push the branch",
+                 "Never force-push", "Never state a result", '"."'):
+        assert word in text, word
+
+
 def test_plan_review_skill():
     front, body = _frontmatter(REVIEW_SKILL.read_text())
     assert re.search(r"^name: taktloop-plan-review$", front, re.M)

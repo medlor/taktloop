@@ -1,3 +1,4 @@
+import os
 import socket
 from pathlib import Path
 
@@ -65,3 +66,25 @@ def test_external_checker_closes_its_http_client(fake_github, monkeypatch):
     monkeypatch.setattr(external, "create_mcp_http_client", lambda **kw: made.append(real(**kw)) or made[-1])
     _checker(fake_github[0])("github", "actions_get", ARGS)
     assert made and all(c.is_closed for c in made)
+
+
+ROOT = Path(__file__).resolve().parent.parent
+LIVE_URL = "https://api.githubcopilot.com/mcp/x/actions/readonly"
+
+
+def _live_environ() -> dict[str, str]:
+    env = {k: v for k, v in os.environ.items() if k == "TAKTLOOP_GITHUB_TOKEN"}
+    return env if env.get("TAKTLOOP_GITHUB_TOKEN") else read_dotenv(ROOT / ".env")
+
+
+@pytest.mark.skipif(not _live_environ().get("TAKTLOOP_GITHUB_TOKEN"),
+                    reason="needs TAKTLOOP_GITHUB_TOKEN in the environment or .env")
+def test_live_github_run():
+    """GitHub's real MCP server: tool name, argument types and field names on a known run."""
+    checker = make_checker({"github": ExternalServer("github", LIVE_URL, "TAKTLOOP_GITHUB_TOKEN")},
+                           _live_environ(), {})
+    result = checker("github", "actions_get", {"method": "get_workflow_run", "owner": "medlor",
+                                               "repo": "taktloop", "resource_id": "41508346956"})
+    run = result["workflow_run"]
+    assert (run["head_sha"], run["path"], run["conclusion"]) == (
+        "b4c593058b64762308b72f0225f63ccb12b07b98", ".github/workflows/ci.yml", "success")

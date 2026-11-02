@@ -4,7 +4,7 @@ taktloop
 
 Every person and agent has a named identity with roles, defined in
 `dev-issuer.yaml`: `tobias` (requester, approver, reviewer, factory owner),
-`agent-a` and `agent-b` (planner, reviewer). A small dev issuer hands out
+`agent-a` and `agent-b` (planner, builder, reviewer, verifier). A small dev issuer hands out
 tokens; the core accepts only calls with a valid token and checks the
 caller's roles on every operation.
 
@@ -123,5 +123,84 @@ Start them the same way, for example `TAKTLOOP_TOKEN=$(uv run taktloop token age
 - `.taktloop/` is gitignored: keys, secret hashes, credentials and the database
   never land in git.
 
+## M3a: plan to merge, with a CI gate
+
+After the plan passes review, a task goes on to code on this repository:
+**workspace → build → code review → verify → integration approval →
+integrate → done**. `agent-a` and `agent-b` may build, review and verify;
+`tobias` approves at the gates. The transition out of `verify` is a **hard
+gate**: the verifier only names the GitHub Actions run, and the core asks
+GitHub itself, through GitHub's MCP server with its own read-only token,
+whether that run is finished, belongs to the reviewed commit, ran
+`.github/workflows/ci.yml` and succeeded. The check is declared as data
+(`verify.check` in `factory.yaml`).
+
+### The core's GitHub token
+
+The core needs its own fine-grained personal access token (agents never see
+it; they push and look up runs with their own `gh` login):
+
+1. GitHub → Settings → Developer settings → Personal access tokens →
+   Fine-grained tokens → **Generate new token**.
+2. Resource owner `medlor`; Repository access: **Only select repositories**,
+   `medlor/taktloop` only.
+3. Repository permissions: **Actions: Read-only** and **Metadata:
+   Read-only** (added automatically). Nothing else.
+4. Put it in a `.env` file next to `factory.yaml` (gitignored):
+
+   ```sh
+   TAKTLOOP_GITHUB_TOKEN=github_pat_...
+   ```
+
+The core reads `TAKTLOOP_GITHUB_TOKEN` from its environment first, then from
+`.env`. Without it the core still starts (with a warning), and every CI check
+is refused with "the core has no credential for github
+(TAKTLOOP_GITHUB_TOKEN is not set)". The token is never written to
+`factory.yaml`, the database, logs or events.
+
+### The demo
+
+Restart the issuer (agents gained the builder and verifier roles) and the
+core, with `separation: strict` in `factory.yaml`. Start new agent sessions
+for fresh tokens. Pick a small real change and take it through design, plan
+and plan review as in M2; when the plan passes, the task waits at
+`workspace`. Then, saying **work on taktloop** in each session:
+
+1. `agent-a` creates the branch `taktloop/<task id>-<short-name>` from
+   `origin/main`, pushes it and completes `workspace` with the base commit.
+2. `agent-a` builds, pushes and completes `build` with the change commit.
+3. `agent-a` is refused `code_review` (strict); `agent-b` reviews
+   `workspace..change`. *Issues* reopen `build` with the findings; after two
+   *issues* verdicts the task waits at `build_escalation`.
+4. `agent-b` verifies: runs the tests, finds the run with
+   `gh run list --commit <sha>`, waits, and completes with
+   `evidence={"ci_run": "<id>"}`. While the run is going, the core refuses
+   ("status is in_progress, expected completed"); a run of an older commit
+   is refused ("head_sha is ..., expected ..."). A red run sends the task
+   back to `build` with `check_failed` feedback naming the run, then through
+   review and verify again. A green run opens `integration_approval`.
+5. `uv run taktloop approve <task>` (as `tobias`, who must not have built
+   the change); `agent-a` merges the change commit into `main`, pushes `main`
+   and completes `integrate` with the merge commit. The task is done.
+6. `uv run taktloop task show <task>` shows the lifecycle: identities,
+   verdicts, every `check` event by `core` (`pass: ...`, `fail: ...`,
+   `mismatch: ...`), `failed → build` for a red round, and the merge commit.
+
+### Known limits (M3a)
+
+- **The CI configuration lives on the task branch.** The gate pins the
+  workflow file (`.github/workflows/ci.yml`), so an always-green workflow
+  added next to it does not count, but a change to `ci.yml` itself that
+  weakens the tests passes the gate. Code review is the only guard for now;
+  protected CI configuration comes later with branch protection.
+- **The merge is not verified.** The core records the merge commit from
+  `integrate` but does not check that `main` contains it or that nothing
+  else was merged. Branch protection with required PR approval is planned
+  for later.
+- Every step is still pulled by hand from a session; the core has no
+  background loop and does not detect stalls (M3b).
+
 `uv run pytest` runs the tests, including end-to-end tests over a real issuer
-and core.
+and core (the M3a one against a fake GitHub MCP server). One live test against
+GitHub's real MCP server runs only when `TAKTLOOP_GITHUB_TOKEN` is set in the
+environment or `.env`; CI skips it.
