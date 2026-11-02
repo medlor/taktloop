@@ -5,5 +5,7 @@ state_dir: .taktloop/issuer           # signing key, secret hashes, local creden
 identities:
   tobias:  {scopes: [taktloop:taktloop:requester, taktloop:taktloop:approver,
                      taktloop:taktloop:reviewer, taktloop:taktloop:factory_owner]}
-  agent-a: {scopes: [taktloop:taktloop:planner, taktloop:taktloop:reviewer]}
-  agent-b: {scopes: [taktloop:taktloop:planner, taktloop:taktloop:reviewer]}
+  agent-a: {scopes: [taktloop:taktloop:planner, taktloop:taktloop:builder,
+                     taktloop:taktloop:reviewer, taktloop:taktloop:verifier]}
+  agent-b: {scopes: [taktloop:taktloop:planner, taktloop:taktloop:builder,
+                     taktloop:taktloop:reviewer, taktloop:taktloop:verifier]}

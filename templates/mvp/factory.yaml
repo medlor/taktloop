@@ -4,6 +4,10 @@ database: .taktloop/factory.db        # gitignored
 auth: {issuer: http://127.0.0.1:8766, audience: taktloop}
 cli: {identity: tobias}
 separation: off                      # off (default) | strict, see 6.4
+mcp_servers:                         # external MCP servers the core itself calls (gate checks)
+  github:
+    url: https://api.githubcopilot.com/mcp/x/actions/readonly
+    token_env: TAKTLOOP_GITHUB_TOKEN   # read from the environment, then from .env next to this file
 workflow:
   start: design
   steps:
@@ -40,12 +44,85 @@ workflow:
         Review the plan against the approved design doc. Return pass or
         issues with concrete findings. Do not edit the plan.
       review_of: plan                # the step whose latest artifact is reviewed
-      on_pass: done
+      on_pass: workspace
       on_issues: plan                # reopens plan as round n+1 with the findings
       max_issue_rounds: 2            # the 2nd 'issues' escalates instead
       on_escalate: plan_escalation
     plan_escalation:
       kind: human_gate
       role: approver
-      on_approve: done               # approve the plan anyway
+      on_approve: workspace          # approve the plan anyway
       on_reject: [plan, design]      # first entry is the default target
+    workspace:
+      kind: agent
+      role: builder
+      skill: using-git-worktrees
+      instructions: >
+        Create the task branch taktloop/<task id>-<short-name> from origin/main,
+        verify a clean test baseline, push the branch to origin.
+      output: {artifacts: [workspace]}       # path ".", commit = the base commit
+      next: build
+    build:
+      kind: agent
+      role: builder
+      skill: subagent-driven-development
+      instructions: >
+        Implement the approved plan on the task branch with test-driven development.
+        Commit, push the branch to origin. Do not merge and do not open a pull request.
+      output: {artifacts: [change]}          # path ".", commit = the pushed branch head
+      next: code_review
+    code_review:
+      kind: agent
+      role: reviewer
+      skill: requesting-code-review
+      instructions: >
+        Review the change (workspace commit .. change commit) against the plan.
+        Return pass, or issues with the critical and important findings. Do not edit code.
+      review_of: build
+      on_pass: verify
+      on_issues: build
+      max_issue_rounds: 2
+      on_escalate: build_escalation
+    build_escalation:
+      kind: human_gate
+      role: approver
+      on_approve: verify                     # accept the change despite the review
+      on_reject: [build, plan]
+    verify:
+      kind: agent
+      role: verifier
+      skill: verification-before-completion
+      instructions: >
+        Run the tests locally on the change commit. Wait for the GitHub Actions run
+        of that commit to finish, then complete with its run id as evidence.
+      evidence: [ci_run]                     # required evidence keys (§6.3)
+      check:                                 # the hard gate (§5)
+        mcp_server: github
+        tool: actions_get
+        args:
+          method: get_workflow_run
+          owner: medlor
+          repo: taktloop
+          resource_id: "{{evidence.ci_run}}"
+        match:                               # else: refused, nothing changes
+          workflow_run.head_sha: "{{artifacts.change.commit}}"
+          workflow_run.path: .github/workflows/ci.yml
+          workflow_run.status: completed
+        expect:                              # else: back to on_fail with the result
+          workflow_run.conclusion: success
+      next: integration_approval
+      on_fail: build
+    integration_approval:
+      kind: human_gate
+      role: approver
+      on_approve: integrate
+      on_reject: [build, plan]
+    integrate:
+      kind: agent
+      role: builder
+      skill: finishing-a-development-branch
+      instructions: >
+        Merge the change commit (not the branch tip) into main, push main to origin.
+        Do not ask which option to take; the approver decided "merge".
+      output: {artifacts: [merge]}           # path ".", commit = the merge commit on main
+      next: done

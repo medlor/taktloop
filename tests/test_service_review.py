@@ -46,10 +46,10 @@ def context(svc, tid):
     return svc.get_step_context(ME, svc.get_task(ME, tid).step_id)
 
 
-def test_pass_finishes_the_task(svc):
+def test_pass_opens_the_workspace(svc):
     tid = at_review(svc)
     s = review(svc, tid, "pass")
-    assert s.status == "done"
+    assert s.current_step == "workspace"
 
 
 def test_review_context_has_latest_plan_and_design(svc):
@@ -175,12 +175,12 @@ def test_escalation_reject_to_other_step_is_refused(svc):
     assert svc.get_task(ME, tid).current_step == "plan_escalation"
 
 
-def test_escalation_approve_finishes(svc):
+def test_escalation_approve_opens_the_workspace(svc):
     tid = at_review(svc)
     review(svc, tid, "issues", "one")
     work(svc, tid, "plan", SHA2)
     review(svc, tid, "issues", "two")
-    assert svc.decide_gate(ME, tid, None, "approve").status == "done"
+    assert svc.decide_gate(ME, tid, None, "approve").current_step == "workspace"
 
 
 # --- override_review (spec 6.3) ------------------------------------------------
@@ -209,7 +209,7 @@ def two_issues(svc):
 def test_override_at_open_review_step(svc, store):
     tid = at_review(svc)
     s = svc.override_review(ME, tid, "plan_review", "  good enough  ")
-    assert s.status == "done"
+    assert s.current_step == "workspace"
     [run] = runs_of(store, tid, "plan_review")
     assert (run.status, run.outcome) == ("completed", "superseded")
     e = override_event(svc, tid)
@@ -224,7 +224,7 @@ def test_override_cancels_a_claim_at_the_review_step(svc, store):
     tid = at_review(svc)
     t = svc.get_task(ME, tid)
     c = svc.claim_step(AGENT_B, t.step_id)
-    assert svc.override_review(ME, tid, "plan_review", "ship it").status == "done"
+    assert svc.override_review(ME, tid, "plan_review", "ship it").current_step == "workspace"
     with pytest.raises(Rejected, match="step is not claimed"):
         svc.complete_step(AGENT_B, t.step_id, c.claim_token, "pass", [])
     [run] = runs_of(store, tid, "plan_review")
@@ -235,7 +235,7 @@ def test_override_cancels_a_claim_at_the_review_step(svc, store):
 def test_override_at_escalation_gate(svc, store):
     tid = two_issues(svc)
     assert svc.get_task(ME, tid).current_step == "plan_escalation"
-    assert svc.override_review(ME, tid, "plan_review", "fine").status == "done"
+    assert svc.override_review(ME, tid, "plan_review", "fine").current_step == "workspace"
     [gate] = runs_of(store, tid, "plan_escalation")
     assert gate.outcome == "superseded"
     e = override_event(svc, tid)
@@ -250,7 +250,7 @@ def test_override_during_plan_revision_approves_latest_completed_round(svc, stor
     svc.decide_gate(ME, tid, "plan_escalation", "reject", "try again")
     t = svc.get_task(ME, tid)
     assert (t.current_step, context(svc, tid).round) == ("plan", 3)
-    assert svc.override_review(ME, tid, "plan_review", "round 2 is fine").status == "done"
+    assert svc.override_review(ME, tid, "plan_review", "round 2 is fine").current_step == "workspace"
     e = override_event(svc, tid)
     assert e.step == "plan"
     assert [(a["name"], a["round"], a["path"], a["commit"]) for a in e.detail["approved"]] == [

@@ -90,7 +90,7 @@ def test_planner_cannot_decide_escalation_gate(strict):
     assert strict.get_task(T, tid).current_step == "plan_escalation"
     with pytest.raises(Rejected, match=f"tobias completed plan round 1 of task {tid}"):
         strict.decide_gate(T, tid, None, "approve")
-    assert strict.decide_gate(B, tid, None, "approve").status == "done"
+    assert strict.decide_gate(B, tid, None, "approve").current_step == "workspace"
 
 
 def test_planner_cannot_override(strict):
@@ -99,7 +99,7 @@ def test_planner_cannot_override(strict):
         strict.override_review(T, tid, "plan_review", "ship it")
     assert refusals(strict, tid) == [
         ("override_review", "tobias", f"strict separation: tobias completed plan round 1 of task {tid}")]
-    assert strict.override_review(B, tid, "plan_review", "ship it").status == "done"
+    assert strict.override_review(B, tid, "plan_review", "ship it").current_step == "workspace"
 
 
 def test_approved_step():
@@ -122,9 +122,9 @@ def test_off_allows_one_identity_to_do_everything(off):
     tid = to_plan_review(off)
     do(off, A, tid, "issues", findings="vague")
     do(off, A, tid, name="plan")
-    assert do(off, A, tid, "pass").status == "done"
+    assert do(off, A, tid, "pass").current_step == "workspace"
     tid = to_plan_review(off, planner=A, designer=A, approver=A)
-    assert off.override_review(A, tid, "plan_review", "fine").status == "done"
+    assert off.override_review(A, tid, "plan_review", "fine").current_step == "workspace"
 
 
 def test_superseded_run_is_not_a_completion(store, clock):

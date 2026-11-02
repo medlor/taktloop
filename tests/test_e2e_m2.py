@@ -98,7 +98,7 @@ def factory(tmp_path, monkeypatch, request):
 
     port = _free_port()
     workflow = (ROOT / "templates/mvp/factory.yaml").read_text()
-    workflow = workflow[workflow.index("workflow:"):]  # the shipped workflow, with plan_review
+    workflow = workflow[workflow.index("mcp_servers:"):]  # the shipped workflow, with plan_review
     core_cfg = tmp_path / "factory.yaml"
     core_cfg.write_text(CORE_HEADER.format(port=port, db=tmp_path / "f.db", issuer=issuer) + workflow)
     url = f"http://127.0.0.1:{port}/mcp"
@@ -197,7 +197,7 @@ def test_m2_demo(factory, capsys):
     capsys.readouterr()
     assert cli("--json", "task", "show", str(tid)) == 0
     task = json.loads(capsys.readouterr().out)
-    assert task["status"] == "done"
+    assert task["current_step"] == "workspace"  # the plan was accepted
     assert [a["commit"][0] for a in task["artifacts"] if a["name"] == "plan"][-1] == "c"
     history = task["history"]
     for e in history:  # every identity's call carries its roles; the core's own events have none
