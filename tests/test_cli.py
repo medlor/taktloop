@@ -377,3 +377,10 @@ def test_credentials_resolve_next_to_the_config(monkeypatch, tmp_path):
     assert dirs == [proj / ".taktloop/credentials"] * 2
     assert cli.main(["token", "me", "--credentials", "elsewhere"]) == 0
     assert dirs[-1] == Path("elsewhere")
+
+
+def test_token_with_schemeless_issuer_is_a_message_not_a_traceback(tmp_path, capsys):
+    (tmp_path / "x.json").write_text('{"issuer": "issuer.test", "client_id": "x", "client_secret": "s"}')
+    assert cli.main(["token", "x", "--credentials", str(tmp_path)]) == 2
+    err = capsys.readouterr().err
+    assert err.startswith("taktloop: ") and "is not an http(s) URL" in err and "Traceback" not in err

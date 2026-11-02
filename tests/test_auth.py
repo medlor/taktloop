@@ -95,14 +95,55 @@ async def test_garbage_and_unreachable_issuer_are_refused(issuer):
     assert await JwtVerifier(ISSUER, "taktloop", fetch_json=down).verify_token(issuer.token()) is None
 
 
-async def test_unknown_kid_refetches_once(issuer, verifier):
+class Clock:
+    def __init__(self):
+        self.now = 1000.0
+
+    def __call__(self):
+        return self.now
+
+
+async def test_unknown_kid_refetches_once(issuer):
+    clock = Clock()
+    verifier = JwtVerifier(ISSUER, "taktloop", fetch_json=issuer.fetch_json, clock=clock)
     assert await verifier.verify_token(issuer.token()) is not None
     rotated = ec.generate_private_key(ec.SECP256R1())
     issuer.keys.append(_jwk(rotated, "k2"))
+    clock.now += JwtVerifier.REFETCH_INTERVAL
     assert await verifier.verify_token(issuer.token(key=rotated, kid="k2")) is not None
     assert issuer.fetches == [META, JWKS, JWKS]
+    clock.now += JwtVerifier.REFETCH_INTERVAL
     assert await verifier.verify_token(issuer.token(kid="k3")) is None
     assert issuer.fetches == [META, JWKS, JWKS, JWKS]
+
+
+async def test_unknown_kid_refetch_is_rate_limited(issuer):
+    clock = Clock()
+    verifier = JwtVerifier(ISSUER, "taktloop", fetch_json=issuer.fetch_json, clock=clock)
+    assert await verifier.verify_token(issuer.token()) is not None
+    for kid in ("x1", "x2", "x3"):
+        assert await verifier.verify_token(issuer.token(kid=kid)) is None
+    assert issuer.fetches == [META, JWKS]  # a flood of unknown kids fetches nothing
+    rotated = ec.generate_private_key(ec.SECP256R1())
+    issuer.keys.append(_jwk(rotated, "k2"))
+    clock.now += JwtVerifier.REFETCH_INTERVAL - 1
+    assert await verifier.verify_token(issuer.token(key=rotated, kid="k2")) is None
+    clock.now += 1
+    assert await verifier.verify_token(issuer.token(key=rotated, kid="k2")) is not None
+    assert issuer.fetches == [META, JWKS, JWKS]
+
+
+async def test_unreachable_issuer_is_not_hammered(issuer):
+    calls = []
+
+    def down(url):
+        calls.append(url)
+        raise OSError("connection refused")
+
+    verifier = JwtVerifier(ISSUER, "taktloop", fetch_json=down, clock=Clock())
+    for _ in range(3):
+        assert await verifier.verify_token(issuer.token()) is None
+    assert len(calls) == 2  # one attempt: metadata, then the OIDC fallback
 
 
 async def test_rs256_issuer_is_accepted(issuer, verifier):

@@ -46,6 +46,20 @@ def test_malformed_credentials_are_a_token_error(tmp_path, content):
 def test_malformed_issuer_answers_are_a_token_error(tmp_path, monkeypatch, answers):
     (tmp_path / "x.json").write_text(json.dumps({"issuer": "http://i", "client_id": "x", "client_secret": "s"}))
     it = iter(answers)
-    monkeypatch.setattr(token_client, "_open", lambda req: next(it))
+    monkeypatch.setattr(token_client, "_open", lambda url, data=None: next(it))
     with pytest.raises(TokenError, match="unexpected answer from the issuer"):
+        fetch_token("x", tmp_path)
+
+
+@pytest.mark.parametrize("issuer", ["issuer.test", "//issuer.test", "localhost:9000", "127.0.0.1:9000", "ftp://i"])
+def test_issuer_without_http_scheme_is_a_token_error(tmp_path, issuer):
+    (tmp_path / "x.json").write_text(json.dumps({"issuer": issuer, "client_id": "x", "client_secret": "s"}))
+    with pytest.raises(TokenError, match=f"{tmp_path / 'x.json'}: issuer: .* is not an http\\(s\\) URL"):
+        fetch_token("x", tmp_path)
+
+
+def test_token_endpoint_without_scheme_is_a_token_error(tmp_path, monkeypatch):
+    (tmp_path / "x.json").write_text(json.dumps({"issuer": "http://i", "client_id": "x", "client_secret": "s"}))
+    monkeypatch.setattr(token_client, "_open", lambda url, data=None: {"token_endpoint": "i/token"})
+    with pytest.raises(TokenError, match="token_endpoint: 'i/token' is not an http"):
         fetch_token("x", tmp_path)

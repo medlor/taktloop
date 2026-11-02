@@ -5,6 +5,8 @@ The issuer is reached over HTTP only: its RFC 8414 metadata (or OIDC discovery) 
 
 import json
 import logging
+import threading
+import time
 import urllib.request
 from collections.abc import Callable, Iterable
 
@@ -31,12 +33,22 @@ class JwtVerifier:
     """mcp's TokenVerifier for JWTs signed with the issuer's asymmetric JWKS keys (RS*, PS*, ES*,
     EdDSA; the algorithm comes from the key, never HS* or none): signature, `iss`, `aud`, `exp`."""
 
-    def __init__(self, issuer: str, audience: str, fetch_json: Callable[[str], dict] = _get_json):
-        self.issuer, self.audience, self._fetch = issuer.rstrip("/"), audience, fetch_json
+    REFETCH_INTERVAL = 30.0  # seconds; unknown key ids come from unauthenticated requests
+
+    def __init__(self, issuer: str, audience: str, fetch_json: Callable[[str], dict] = _get_json,
+                 clock: Callable[[], float] = time.monotonic):
+        self.issuer, self.audience, self._fetch, self._clock = issuer.rstrip("/"), audience, fetch_json, clock
         self._jwks_uri: str | None = None
         self._keys: dict[str, jwt.PyJWK] = {}
+        self._last_fetch: float | None = None
+        self._lock = threading.Lock()  # concurrent requests refetch from worker threads
 
     def _refetch_keys(self) -> None:
+        with self._lock:
+            now = self._clock()
+            if self._last_fetch is not None and now - self._last_fetch < self.REFETCH_INTERVAL:
+                return  # fetched (or tried to) moments ago: an unknown kid now is not a rotation
+            self._last_fetch = now  # set before fetching, so a failing issuer is not hammered either
         if self._jwks_uri is None:
             try:
                 meta = self._fetch(f"{self.issuer}/.well-known/oauth-authorization-server")
@@ -46,7 +58,7 @@ class JwtVerifier:
         self._keys = {k.key_id: k for k in jwt.PyJWKSet.from_dict(self._fetch(self._jwks_uri)).keys}
 
     async def _key(self, kid: str | None) -> jwt.PyJWK:
-        if kid not in self._keys:  # first use, or the issuer rotated its key: fetch once
+        if kid not in self._keys:  # first use, or the issuer rotated its key: fetch, rate-limited
             await anyio.to_thread.run_sync(self._refetch_keys)
         if kid not in self._keys:
             raise jwt.InvalidKeyError(f"unknown key id {kid!r}")
