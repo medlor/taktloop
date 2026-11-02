@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from taktloop.models import Artifact, Claim, TaskSummary
-from taktloop.permissions import ROLES, STEP, require
+from taktloop.permissions import require
 from taktloop.rules import Rejected, same_token, waiting_for
 from taktloop.store import StepRunRow, Store, TaskRow, Tx
 from taktloop.workflow import Workflow
@@ -59,15 +59,14 @@ class ServiceBase:
     def _run(self, caller: Caller, operation: str, detail: dict[str, Any],
              body: Callable[[Tx, _Ids], Any], *, writes: bool = True) -> Any:
         """One transaction per operation; rejections are rolled back, then recorded.
-        Step-bound permissions are checked by the body once it has loaded the step."""
+        Step-bound roles are checked again by the body once it has loaded the step."""
         ids = _Ids()
-        with self._store.transaction() as tx:  # own txn: expiry survives a rejected op
-            for run in tx.step_runs_with_status(["claimed"]):
-                self._expire(tx, run)
         try:
+            require(caller, operation)  # before anything else, even lease expiry
+            with self._store.transaction() as tx:  # own txn: expiry survives a rejected op
+                for run in tx.step_runs_with_status(["claimed"]):
+                    self._expire(tx, run)
             with self._store.transaction() as tx:
-                if ROLES[operation] != STEP:
-                    require(caller, operation)
                 result = body(tx, ids)
                 if writes:
                     self._event(tx, caller, operation, ids, detail)

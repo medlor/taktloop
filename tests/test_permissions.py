@@ -112,3 +112,24 @@ def test_claim_stores_subject_and_executor_and_waiting_for_names_both(svc, store
         run = tx.get_step_run(t.step_id)
     assert (run.claimed_by, run.claimed_executor) == ("agent-a", "claude-code")
     assert "in progress by agent-a (claude-code)" in svc.get_task(A, t.id).waiting_for
+
+
+def test_caller_without_roles_is_refused_before_any_lookup_or_expiry(svc, store, clock):
+    from datetime import timedelta
+
+    t, c = claimed_by_a(svc)
+    svc.complete_step(A, t.step_id, c.claim_token, "completed", ART)  # task 1 now at the gate
+    t2, c2 = claimed_by_a(svc)
+    clock.now += timedelta(minutes=31)  # t2's lease is overdue; a refused call must not expire it
+    assert refused(svc.create_task, NOBODY, "T") == "create_task requires role requester; you have none"
+    for sid, tid in [(t2.step_id, t.id), (99, 99)]:
+        calls = [("claim_step", svc.claim_step, (sid,), {}),
+                 ("heartbeat", svc.heartbeat, (sid, c2.claim_token), {}),
+                 ("complete_step", svc.complete_step, (sid, c2.claim_token, "completed", ART), {}),
+                 ("release_step", svc.release_step, (sid, "r"), {"claim_token": c2.claim_token}),
+                 ("release_step", svc.release_step, (sid, "r"), {"force": True}),
+                 ("decide_gate", svc.decide_gate, (tid, None, "approve"), {})]
+        for op, call, args, kw in calls:
+            assert refused(call, NOBODY, *args, **kw) == f"{op} requires a taktloop role; you have none"
+    with store.transaction() as tx:
+        assert tx.get_step_run(t2.step_id).status == "claimed"

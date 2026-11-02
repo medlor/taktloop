@@ -24,12 +24,12 @@ ROLES = {
 def require(caller: Caller, operation: str, step: Step | None = None) -> None:
     """Raise Rejected unless the caller holds the role `operation` needs (on `step`)."""
     role = ROLES[operation]
+    if role == STEP:  # without the step (the up-front check) only "has some role" is checked
+        role = step.role if step else ANY
     have = ", ".join(sorted(caller.roles)) or "none"
     if role == ANY:
         if not caller.roles:
             raise Rejected(f"{operation} requires a taktloop role; you have {have}")
         return
-    if role == STEP:
-        role = step.role
     if role not in caller.roles:
         raise Rejected(f"{operation} requires role {role}; you have {have}")
