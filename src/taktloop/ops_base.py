@@ -1,0 +1,122 @@
+"""Shared base for the service operations: caller, transactions, expiry, loading."""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from typing import Any
+
+from taktloop.models import Artifact, Claim, TaskSummary
+from taktloop.rules import Rejected, same_token, waiting_for
+from taktloop.store import StepRunRow, Store, TaskRow, Tx
+from taktloop.workflow import Workflow
+
+
+@dataclass(frozen=True)
+class Caller:
+    subject: str
+    roles: frozenset[str]
+    executor: str | None = None
+
+    @property
+    def label(self) -> str:
+        return f"{self.subject} ({self.executor})" if self.executor else self.subject
+
+
+@dataclass
+class _Ids:
+    """Task/step-run the current operation touched, for its history event."""
+    task_id: int | None = None
+    step_run_id: int | None = None
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+class ServiceBase:
+    def __init__(self, store: Store, workflow: Workflow,
+                 lease: timedelta = timedelta(minutes=30),
+                 clock: Callable[[], datetime] = _utc_now) -> None:
+        self._store, self._wf, self._lease, self._clock = store, workflow, lease, clock
+
+    # --- shared helpers -------------------------------------------------
+
+    def _event(self, tx: Tx, who: str, operation: str, ids: _Ids, detail: dict,
+               result: str = "ok", reason: str | None = None) -> None:
+        tx.insert_event(self._clock(), who, operation, ids.task_id, ids.step_run_id,
+                        detail, result, reason)
+
+    def _run(self, caller: Caller, operation: str, detail: dict[str, Any],
+             body: Callable[[Tx, _Ids], Any], *, writes: bool = True) -> Any:
+        """One transaction per operation; rejections are rolled back, then recorded."""
+        ids = _Ids()
+        with self._store.transaction() as tx:  # own txn: expiry survives a rejected op
+            for run in tx.step_runs_with_status(["claimed"]):
+                self._expire(tx, run)
+        try:
+            with self._store.transaction() as tx:
+                result = body(tx, ids)
+                if writes:
+                    self._event(tx, caller.label, operation, ids, detail)
+                return result
+        except Rejected as r:
+            with self._store.transaction() as tx:
+                self._event(tx, caller.label, operation, ids, detail, "rejected", r.reason)
+            raise
+
+    def _expire(self, tx: Tx, run: StepRunRow) -> StepRunRow:
+        """Lazy lease expiry: an overdue claimed run becomes open again."""
+        if run.status != "claimed" or run.lease_expires_at > self._clock():
+            return run
+        tx.update_step_run(run.id, status="open", claimed_by=None, claim_token=None,
+                           lease_expires_at=None)
+        self._event(tx, "core", "lease_expired", _Ids(run.task_id, run.id),
+                    {"step_id": run.id, "was_claimed_by": run.claimed_by})
+        return tx.get_step_run(run.id)
+
+    def _load(self, tx: Tx, ids: _Ids, step_id: int) -> StepRunRow:
+        run = tx.get_step_run(step_id)
+        if run is None:
+            raise Rejected(f"unknown step {step_id}")
+        ids.task_id, ids.step_run_id = run.task_id, run.id
+        return self._expire(tx, run)
+
+    def _load_owned(self, tx: Tx, ids: _Ids, step_id: int, claim_token: str) -> StepRunRow:
+        run = self._load(tx, ids, step_id)
+        if run.status != "claimed":
+            raise Rejected("step is not claimed (lease expired or released); claim it again")
+        if not same_token(run.claim_token, claim_token):
+            raise Rejected("claim token does not match")
+        return run
+
+    def _summary(self, tx: Tx, task: TaskRow) -> TaskSummary:
+        run = None
+        if task.status != "done":
+            run = tx.current_step_run(task.id)
+            run = self._expire(tx, run) if run else None
+        return TaskSummary(
+            id=task.id, title=task.title, status=task.status,
+            current_step=run.step if run else None, step_id=run.id if run else None,
+            waiting_for=waiting_for(
+                self._wf.step(run.step) if run else None,
+                run.status if run else "open", run.claimed_by if run else None,
+                run.lease_expires_at if run else None))
+
+    def _open_step(self, tx: Tx, task_id: int, step: str) -> int:
+        last = tx.last_step_run(task_id, step)
+        return tx.insert_step_run(task_id, step, (last.round if last else 0) + 1, self._clock())
+
+    def _artifacts(self, tx: Tx, task_id: int) -> list[Artifact]:
+        out = []
+        for a in tx.list_artifacts(task_id):
+            run = tx.get_step_run(a.step_run_id)
+            out.append(Artifact(name=a.name, path=a.path, commit=a.commit, branch=a.branch,
+                                step=run.step, round=run.round))
+        return out
+
+    def _claim(self, tx: Tx, run: StepRunRow) -> Claim:
+        expires = self._clock() + self._lease
+        tx.update_step_run(run.id, lease_expires_at=expires)
+        return Claim(step_id=run.id, claim_token=run.claim_token, lease_expires_at=expires)
