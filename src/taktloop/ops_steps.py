@@ -60,6 +60,7 @@ class StepOps(ServiceBase):
                 target = self._after_issues(tx, run.task_id, step)
             else:
                 target = step.on_pass if outcome == "pass" else step.next
+            detail["next"] = target
             self._advance(tx, run.task_id, target)
             return self._summary(tx, tx.get_task(run.task_id))
         detail = {"step_id": step_id, "outcome": outcome,

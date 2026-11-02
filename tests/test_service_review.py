@@ -95,6 +95,9 @@ def test_issues_reopen_plan_with_findings_then_escalate(svc, store):
     assert s.current_step == "plan_escalation"
     assert s.waiting_for == (
         "waiting for approver decision at plan_escalation (plan failed review 2 times)")
+    verdicts = [e for e in svc.get_task(ME, tid).history
+                if e.operation == "complete_step" and e.step == "plan_review"]
+    assert [e.detail["next"] for e in verdicts] == ["plan", "plan_escalation"]
 
 
 def test_issue_count_restarts_after_escalation_gate(svc):

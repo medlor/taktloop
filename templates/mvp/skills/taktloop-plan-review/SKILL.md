@@ -71,6 +71,6 @@ with no artifacts. `findings` is required for `issues`.
 
 - Never edit, commit or rewrite the plan or the design doc, even for a
   one-line fix: put it in the findings.
-- Never review a plan you wrote. If the core refuses your claim for strict
-  separation, report the reason and stop.
+- If the core refuses your claim for strict separation, report the reason and
+  stop.
 - Review only. Do not start implementing the plan.

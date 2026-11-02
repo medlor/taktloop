@@ -213,8 +213,8 @@ def test_m2_demo(factory, capsys):
     verdicts = [e for e in history if e["operation"] == "complete_step" and e["step"] == "plan_review"]
     assert [(e["subject"], e["roles"], e["executor"], e["detail"]["outcome"]) for e in verdicts] == [
         ("agent-b", agent_roles, "claude-code", "issues")] * 2
+    assert [e["detail"]["next"] for e in verdicts] == ["plan", "plan_escalation"]  # the escalation
 
-    # the escalation: the escalation gate's run is what the override closes
     (override,) = [e for e in history if e["operation"] == "override_review"]
     assert (override["subject"], override["roles"], override["executor"], override["step"],
             override["result"]) == ("tobias", tobias_roles, "taktloop-cli", "plan_escalation", "ok")
@@ -229,3 +229,4 @@ def test_m2_demo(factory, capsys):
     shown = capsys.readouterr().out
     assert "agent-b (claude-code)" in shown and "tobias (taktloop-cli)" in shown
     assert "override: Good enough" in shown
+    assert "issues → plan" in shown and "issues → plan_escalation" in shown

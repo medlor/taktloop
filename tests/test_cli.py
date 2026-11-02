@@ -333,3 +333,20 @@ def test_review_releases_the_claim_when_the_verdict_is_rejected(monkeypatch, cap
     assert capsys.readouterr().err == "rejected: findings are required for 'issues'\n"
     assert seen[-1] == ("release_step", {"step_id": 7, "claim_token": "tok",
                                          "reason": "taktloop review: verdict rejected"})
+
+
+def test_review_verdicts_render_outcome_and_next_step():
+    d = dict(DETAIL)
+    d["history"] = [
+        {"at": "2026-11-01T09:05:00Z", "subject": "agent-b", "roles": ["reviewer"],
+         "executor": "claude-code", "operation": "complete_step", "step": "plan_review",
+         "result": "ok", "reason": None,
+         "detail": {"outcome": "issues", "findings": "x", "artifacts": [], "next": "plan_escalation"}},
+        {"at": "2026-11-01T09:06:00Z", "subject": "agent-b", "roles": ["reviewer"],
+         "executor": "claude-code", "operation": "complete_step", "step": "plan_review",
+         "result": "ok", "reason": None,
+         "detail": {"outcome": "pass", "findings": None, "artifacts": [], "next": "done"}},
+    ]
+    rows = cli_commands.render_task_detail(d).splitlines()[-2:]
+    assert rows[0].endswith("plan_review  ok  issues → plan_escalation")
+    assert rows[1].endswith("plan_review  ok  pass → done")
