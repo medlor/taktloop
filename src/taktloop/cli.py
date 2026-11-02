@@ -184,6 +184,12 @@ def _parser() -> argparse.ArgumentParser:
     rel.add_argument("--force", action="store_true", required=True)
     rel.add_argument("--reason", required=True)
     sub.add_parser("steps", parents=[shared], help="list open steps")
+    iss = sub.add_parser("issuer", help="run the dev issuer (development only)")
+    iss.add_argument("--config", type=Path, default=Path("dev-issuer.yaml"))
+    iss_init = iss.add_subparsers(dest="sub").add_parser("init", help="create the signing key and credentials")
+    iss_init.add_argument("--config", type=Path, default=argparse.SUPPRESS)
+    iss_init.add_argument("--rotate", metavar="ID", help="issue a new secret for one identity")
+    iss_init.add_argument("--credentials", type=Path, default=Path(".taktloop/credentials"))
     s = sub.add_parser("install-skill", parents=[shared], help="copy the bridge skill into a project")
     s.add_argument("--dest", type=Path, default=Path(".claude/skills/taktloop"))
     return p
@@ -222,10 +228,34 @@ def _install_skill(dest: Path) -> int:
     return 0
 
 
+def _issuer(ns) -> int:
+    from taktloop.issuer.app import build_app  # only the issuer command loads it
+    from taktloop.issuer.config import load_issuer_config
+    from taktloop.issuer.state import init_state
+
+    try:
+        cfg = load_issuer_config(ns.config)
+        if ns.sub == "init":
+            written = init_state(cfg, ns.credentials, ns.rotate)
+            print("\n".join(f"{i}: {ns.credentials / (i + '.json')}" for i in written) or "nothing to do")
+            return 0
+        app = build_app(cfg)
+    except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError) as e:
+        print(f"taktloop: {e}", file=sys.stderr)
+        return 2
+    import uvicorn
+
+    print("WARNING: taktloop dev issuer, for development only", file=sys.stderr)
+    uvicorn.run(app, host=cfg.host, port=cfg.port)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ns = _parser().parse_args(argv)
     if ns.cmd == "install-skill":
         return _install_skill(ns.dest)
+    if ns.cmd == "issuer":
+        return _issuer(ns)
     try:
         cfg = None if (ns.url and ns.cmd != "serve") else load_config(ns.config)
     except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError) as e:

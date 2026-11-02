@@ -1,0 +1,9 @@
+issuer: http://127.0.0.1:8766
+audience: taktloop                    # aud claim; must match the core's auth.audience
+token_lifetime: 12h
+state_dir: .taktloop/issuer           # signing key, secret hashes, local credential files (gitignored)
+identities:
+  tobias:  {scopes: [taktloop:taktloop:requester, taktloop:taktloop:approver,
+                     taktloop:taktloop:reviewer, taktloop:taktloop:factory_owner]}
+  agent-a: {scopes: [taktloop:taktloop:planner, taktloop:taktloop:reviewer]}
+  agent-b: {scopes: [taktloop:taktloop:planner, taktloop:taktloop:reviewer]}
