@@ -8,6 +8,7 @@ from taktloop.models import TaskSummary
 from taktloop.ops_base import Caller, ServiceBase, _holder, _Ids
 from taktloop.permissions import require
 from taktloop.rules import Rejected, clean_reason, latest_rounds
+from taktloop.separation import approved_step, check_approval
 from taktloop.store import Tx
 
 
@@ -34,6 +35,9 @@ class GateOps(ServiceBase):
             if gate is not None and gate != run.step:
                 raise Rejected(f"task {task_id} is at gate {run.step}, not {gate}")
             step = self._wf.step(run.step)
+            approved = approved_step(self._wf, step, None)
+            self._separate(tx, task_id,
+                           lambda recs: check_approval(approved, caller.subject, recs))
             if decision == "approve":
                 dest, outcome = step.on_approve, "approved"
             elif decision == "reject":
@@ -77,6 +81,9 @@ class GateOps(ServiceBase):
                     run.step == review.review_of and verdicts and run.id > verdicts[0].id)):
                 raise Rejected(f"task {task_id} has no review of {review.review_of} to override")
             ids.step_run_id = run.id
+            approved = approved_step(self._wf, None, review)
+            self._separate(tx, task_id,
+                           lambda recs: check_approval(approved, caller.subject, recs))
             if run.status == "claimed":
                 names["cancelled_claim"] = _holder(run)
             names["verdicts"] = [{"outcome": r.outcome, "by": r.claimed_by, "round": r.round}

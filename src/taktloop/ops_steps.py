@@ -8,6 +8,7 @@ from taktloop.models import ArtifactIn, Claim, TaskSummary
 from taktloop.ops_base import Caller, ServiceBase, _check_owner, _holder, _Ids
 from taktloop.permissions import require
 from taktloop.rules import Rejected, check_artifacts
+from taktloop.separation import check_claim
 from taktloop.store import ArtifactRow, Tx
 from taktloop.workflow import Step
 
@@ -23,6 +24,8 @@ class StepOps(ServiceBase):
                 raise Rejected(f"step is not open (status: {run.status})")
             if self._wf.step(run.step).kind != "agent":
                 raise Rejected("step is a human gate and cannot be claimed")
+            self._separate(tx, run.task_id, lambda recs: check_claim(
+                self._wf, self._wf.step(run.step), caller.subject, recs))
             tx.update_step_run(run.id, status="claimed", claimed_by=caller.subject,
                                claimed_executor=caller.executor,
                                claim_token=secrets.token_hex(16))

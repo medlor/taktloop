@@ -59,7 +59,8 @@ def run(cfg: FactoryConfig) -> None:
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
     logging.getLogger("taktloop").addHandler(handler)
     cfg.database.parent.mkdir(parents=True, exist_ok=True)
-    service = Service(Store(cfg.database), cfg.workflow, timedelta(minutes=cfg.lease_minutes))
+    service = Service(Store(cfg.database), cfg.workflow, timedelta(minutes=cfg.lease_minutes),
+                      separation=cfg.separation)
     verifier = JwtVerifier(cfg.auth_issuer, cfg.auth_audience)
     app = _log_unauthenticated(
         build_server(service, cfg.factory, verifier, cfg.url).streamable_http_app(host=cfg.host))

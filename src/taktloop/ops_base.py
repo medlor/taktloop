@@ -10,6 +10,7 @@ from typing import Any
 from taktloop.models import Artifact, Claim, TaskSummary
 from taktloop.permissions import require
 from taktloop.rules import Rejected, same_token, waiting_for
+from taktloop.separation import Record
 from taktloop.store import StepRunRow, Store, TaskRow, Tx
 from taktloop.workflow import DONE, Workflow
 
@@ -46,8 +47,9 @@ def _utc_now() -> datetime:
 class ServiceBase:
     def __init__(self, store: Store, workflow: Workflow,
                  lease: timedelta = timedelta(minutes=30),
-                 clock: Callable[[], datetime] = _utc_now) -> None:
+                 clock: Callable[[], datetime] = _utc_now, separation: str = "off") -> None:
         self._store, self._wf, self._lease, self._clock = store, workflow, lease, clock
+        self._separation = separation
 
     # --- shared helpers -------------------------------------------------
 
@@ -77,6 +79,17 @@ class ServiceBase:
             with self._store.transaction() as tx:
                 self._event(tx, caller, operation, ids, detail, "rejected", r.reason)
             raise
+
+    def _separate(self, tx: Tx, task_id: int,
+                  rule: Callable[[list[Record]], str | None]) -> None:
+        """In strict mode, refuse with the rule's text if it objects to the task's records."""
+        if self._separation != "strict":
+            return
+        refusal = rule([Record(r.step, r.round, r.claimed_by, task_id)
+                        for r in tx.list_step_runs(task_id)
+                        if r.status == "completed" and r.claimed_by])
+        if refusal:
+            raise Rejected(refusal)
 
     def _expire(self, tx: Tx, run: StepRunRow) -> StepRunRow:
         """Lazy lease expiry: an overdue claimed run becomes open again."""
