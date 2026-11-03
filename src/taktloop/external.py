@@ -10,7 +10,7 @@ from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared._httpx_utils import create_mcp_http_client
 
-from taktloop.checks import CheckUnavailable, read_result
+from taktloop.checks import CheckUnavailable, ToolFailed, read_result
 
 Checker = Callable[[str, str, dict[str, Any]], dict]  # (server name, tool, args) -> result
 
@@ -53,7 +53,7 @@ def make_checker(servers: Mapping[str, ExternalServer], environ: Mapping[str, st
                 async with Client(streamable_http_client(server.url, http_client=http)) as client:
                     result = await client.call_tool(tool, args)
         if result.is_error:
-            raise CheckUnavailable(result.content[0].text if result.content else "unknown error")
+            raise ToolFailed(result.content[0].text if result.content else "unknown error")
         return read_result(result.structured_content, [c.text for c in result.content])
 
     def check(name: str, tool: str, args: dict[str, str]) -> dict:

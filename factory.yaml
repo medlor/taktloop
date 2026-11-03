@@ -30,6 +30,7 @@ workflow:
     design_approval:
       kind: human_gate
       role: approver
+      approves: design
       on_approve: plan
       on_reject: design                # reopens design as round n+1, with the reason
     plan:
@@ -130,6 +131,7 @@ workflow:
     integration_approval:
       kind: human_gate
       role: approver
+      approves: build
       on_approve: integrate
       on_reject: [build, plan]
     integrate:

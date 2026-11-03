@@ -41,6 +41,7 @@ steps:
   design_approval:
     kind: human_gate
     role: approver
+    approves: design
     on_approve: plan
     on_reject: design
   plan:

@@ -92,6 +92,10 @@ class CheckUnavailable(Exception):
     """The check could not be evaluated; str(e) is the reason."""
 
 
+class ToolFailed(CheckUnavailable):
+    """The tool itself answered with an error."""
+
+
 @dataclass(frozen=True)
 class Mismatch:
     field: str
@@ -99,9 +103,12 @@ class Mismatch:
     want: str
 
 
-def substitute(value: Any, evidence: Mapping[str, str], artifacts: Mapping[str, Artifact]) -> Any:
+def substitute(value: Any, evidence: Mapping[str, str], artifacts: Mapping[str, Artifact],
+               values: Mapping[str, str] = {}) -> Any:
     """``value`` with every placeholder in any string, at any depth, replaced."""
     def lookup_key(key: str) -> str:
+        if key in values:
+            return str(values[key])
         kind, _, rest = key.partition(".")
         name, _, attr = rest.partition(".")
         if kind == "evidence" and rest in evidence:
@@ -113,15 +120,15 @@ def substitute(value: Any, evidence: Mapping[str, str], artifacts: Mapping[str, 
     if isinstance(value, str):
         return PLACEHOLDER.sub(lambda m: lookup_key(m.group(1)), value)
     if isinstance(value, Mapping):
-        return {k: substitute(v, evidence, artifacts) for k, v in value.items()}
+        return {k: substitute(v, evidence, artifacts, values) for k, v in value.items()}
     if isinstance(value, list):
-        return [substitute(v, evidence, artifacts) for v in value]
+        return [substitute(v, evidence, artifacts, values) for v in value]
     return value
 
 
-def resolve(decl: CheckDecl, evidence: Mapping[str, str],
-            artifacts: Mapping[str, Artifact]) -> CheckDecl:
-    return replace(decl, **{f: substitute(getattr(decl, f), evidence, artifacts)
+def resolve(decl: CheckDecl, evidence: Mapping[str, str], artifacts: Mapping[str, Artifact],
+            values: Mapping[str, str] = {}) -> CheckDecl:
+    return replace(decl, **{f: substitute(getattr(decl, f), evidence, artifacts, values)
                             for f in ("args", "match", "expect")})
 
 

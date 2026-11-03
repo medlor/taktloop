@@ -3,7 +3,7 @@ import copy
 import pytest
 import yaml
 
-from taktloop.workflow import DONE, WorkflowError, parse_workflow
+from taktloop.workflow import DONE, WorkflowError, graph_problems, parse_step, parse_workflow
 
 MVP = yaml.safe_load(
     """
@@ -262,7 +262,7 @@ def _on_gate():
     (_with_check(args={"resource_id": "{{evidence.run}}"}), "unknown placeholder evidence.run"),
     (_with_check(match={"a": "{{artifacts.nope.commit}}"}), "unknown placeholder artifacts.nope.commit"),
     (_with_check(match={"a": "{{artifacts.change.sha}}"}), "unknown placeholder artifacts.change.sha"),
-    (_with_check(match={"a": "{{task.id}}"}), "unknown placeholder task.id"),
+    (_with_check(match={"a": "{{task.nope}}"}), "unknown placeholder task.nope"),
     (_on_review(), "checks are allowed on agent work steps only"),
     (_on_gate(), "checks are allowed on agent work steps only"),
     (_verify_workflow(on_fail="nowhere"), "points to unknown step"),
@@ -353,3 +353,55 @@ def test_dispatch_refusals():
     wf["steps"]["plan_review"]["dispatch"] = "sometimes"
     with pytest.raises(WorkflowError, match="dispatch"):
         parse_workflow(wf)
+
+
+def test_routes_on_agent_step_and_gate():
+    wf = parse_workflow({"start": "triage", "steps": {
+        "triage": {"kind": "agent", "role": "triage", "skill": "taktloop-triage",
+                   "routes": {"quick": "build", "park": "decide"}},
+        "decide": {"kind": "human_gate", "role": "approver",
+                   "routes": {"quick": "build", "cancel": "cancelled"}},
+        "build": {"kind": "agent", "role": "builder", "skill": "s",
+                  "output": {"artifacts": ["change"]}, "next": "done",
+                  "description": "Builds it."}}})
+    assert wf.steps["triage"].routes == {"quick": "build", "park": "decide"}
+    assert set(wf.steps["decide"].targets) == {"build", "cancelled"}
+    assert wf.steps["build"].description == "Builds it."
+    assert wf.data["start"] == "triage" and wf.version == 1
+
+
+@pytest.mark.parametrize("raw", [
+    {"kind": "agent", "role": "r", "skill": "s", "routes": {}},
+    {"kind": "agent", "role": "r", "skill": "s", "routes": {"Quick!": "x"}},
+    {"kind": "agent", "role": "r", "skill": "s", "routes": {"q": "x"}, "next": "x"},
+    {"kind": "human_gate", "role": "r", "routes": {"q": "x"}, "on_approve": "x", "on_reject": "x"},
+    {"kind": "human_gate", "role": "r", "routes": {"q": "x"}, "approves": "x"},
+])
+def test_parse_step_refuses_bad_routes(raw):
+    with pytest.raises(WorkflowError):
+        parse_step("s", raw)
+
+
+def test_graph_problems_are_listed_not_raised():
+    steps = {"a": parse_step("a", {"kind": "agent", "role": "r", "skill": "s",
+                                   "output": {"artifacts": ["x"]}, "next": "b"}),
+             "c": parse_step("c", {"kind": "human_gate", "role": "r", "on_approve": "done",
+                                   "on_reject": "a", "approves": "zzz"})}
+    problems = graph_problems(steps, "a")
+    assert any("unknown step 'b'" in p for p in problems)
+    assert any("unreachable" in p and "c" in p for p in problems)
+    assert any("approves" in p for p in problems)
+    assert graph_problems(steps, None)[0].startswith("start")
+
+
+def test_cancelled_is_reserved():
+    with pytest.raises(WorkflowError):
+        parse_step("cancelled", {"kind": "agent", "role": "r", "skill": "s",
+                                 "output": {"artifacts": ["x"]}, "next": "done"})
+
+
+def test_task_placeholders_allowed_in_call_args():
+    parse_workflow({"start": "t", "steps": {"t": {"kind": "code", "role": "steward",
+        "call": {"mcp_server": "tickets", "tool": "create_ticket",
+                 "args": {"title": "{{task.title}}", "body": "{{task.request}}"},
+                 "evidence": {"ticket": "id"}}, "next": "done"}}})

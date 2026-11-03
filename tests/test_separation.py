@@ -155,7 +155,7 @@ steps:
     check: {mcp_server: github, tool: t, args: {}, expect: {ok: "yes"}}
     next: gate
     on_fail: build
-  gate: {kind: human_gate, role: approver, on_approve: done, on_reject: build}
+  gate: {kind: human_gate, role: approver, approves: build, on_approve: done, on_reject: build}
 """))
     assert approved_step(wf, wf.step("gate"), None) == "build"
     svc = Service(store, wf, clock=clock, separation="strict",
@@ -168,3 +168,15 @@ steps:
     with pytest.raises(Rejected) as e:
         svc.decide_gate(A, tid, "gate", "approve")
     assert e.value.reason == f"strict separation: agent-a completed build round 1 of task {tid}"
+
+
+def test_approved_step_uses_approves_not_file_order():
+    wf = parse_workflow(yaml.safe_load("""
+start: gate
+steps:
+  gate: {kind: human_gate, role: approver, approves: design, on_approve: design, on_reject: design}
+  other: {kind: human_gate, role: approver, on_approve: done, on_reject: design}
+  design: {kind: agent, role: planner, skill: s, output: {artifacts: [d]}, next: other}
+"""))
+    assert approved_step(wf, wf.step("gate"), None) == "design"
+    assert approved_step(wf, wf.step("other"), None) == ""

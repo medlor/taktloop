@@ -1,12 +1,16 @@
 """Parse and validate the ``workflow:`` block of factory.yaml. Pure, no I/O."""
 
+import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from taktloop.checks import CallDecl, CheckDecl, parse_call, parse_check, placeholders
 
 DONE = "done"  # reserved target name: the task is finished
+CANCELLED = "cancelled"  # reserved target name: the task is cancelled
+ROUTE_NAME = re.compile(r"[a-z][a-z_]*")
+TASK_FIELDS = ("task.id", "task.title", "task.request")
 KINDS = ("agent", "human_gate", "code")
 REVIEW_KEYS = ("review_of", "on_pass", "on_issues", "max_issue_rounds", "on_escalate")
 
@@ -37,6 +41,9 @@ class Step:
     call: CallDecl | None = None
     dispatch: Literal["pull", "push"] = "pull"
     push_identity: str | None = None
+    description: str = ""
+    routes: Mapping[str, str] = field(default_factory=dict)
+    approves: str | None = None
 
     @property
     def is_review(self) -> bool:
@@ -45,7 +52,7 @@ class Step:
     @property
     def targets(self) -> tuple[str, ...]:
         named = (self.next, self.on_approve, *self.on_reject, self.review_of, self.on_pass,
-                 self.on_issues, self.on_escalate, self.on_fail)
+                 self.on_issues, self.on_escalate, self.on_fail, *self.routes.values())
         return tuple(t for t in named if t)
 
 
@@ -53,6 +60,8 @@ class Step:
 class Workflow:
     start: str
     steps: Mapping[str, Step]
+    version: int = 1
+    data: Mapping[str, Any] = field(default_factory=dict)  # the raw {start, steps} it was parsed from
 
     def step(self, name: str) -> Step:
         try:
@@ -65,11 +74,11 @@ class Workflow:
         return next((s for s in self.steps.values() if s.on_escalate == gate), None)
 
 
-def _parse_step(name: str, raw: Any) -> Step:
+def parse_step(name: str, raw: Any) -> Step:
     if not isinstance(raw, dict):
         raise WorkflowError(f"step {name!r}: definition must be a mapping")
-    if name == DONE:
-        raise WorkflowError(f"step name {DONE!r} is reserved")
+    if name in (DONE, CANCELLED):
+        raise WorkflowError(f"step name {name!r} is reserved")
     role = raw.get("role")
     if not role:
         raise WorkflowError(f"step {name!r}: role is required")
@@ -82,6 +91,7 @@ def _parse_step(name: str, raw: Any) -> Step:
         return _parse_code_step(name, raw)
     dispatch, identity = _parse_push(name, raw, kind)
     skill, artifacts, nxt, approve, reject = None, (), None, None, ()
+    routes, approves = _parse_routes(name, raw, kind)
     extra = _parse_check_fields(name, raw, kind)
     review = {k: raw.get(k) for k in REVIEW_KEYS}
     if kind == "agent":
@@ -90,7 +100,11 @@ def _parse_step(name: str, raw: Any) -> Step:
         nxt = raw.get("next")
         if not skill:
             raise WorkflowError(f"step {name!r}: agent steps need a skill")
-        if any(v is not None for v in review.values()):
+        if routes:
+            bad = next((k for k in ("next", "output", "check", *REVIEW_KEYS) if raw.get(k) is not None), None)
+            if bad:
+                raise WorkflowError(f"step {name!r}: routing steps take no {bad}")
+        elif any(v is not None for v in review.values()):
             _check_review(name, review, raw)
         elif not artifacts and not extra["check"]:
             raise WorkflowError(f"step {name!r}: agent steps need output.artifacts")
@@ -99,7 +113,9 @@ def _parse_step(name: str, raw: Any) -> Step:
     else:
         approve, reject = raw.get("on_approve"), raw.get("on_reject")
         reject = (reject,) if isinstance(reject, str) else tuple(reject or ())
-        if not approve or not reject:
+        if routes and (approve or reject):
+            raise WorkflowError(f"step {name!r}: gates with routes take no on_approve or on_reject")
+        if not routes and (not approve or not reject):
             raise WorkflowError(f"step {name!r}: gates need on_approve and on_reject")
         review = {}
     return Step(
@@ -114,9 +130,27 @@ def _parse_step(name: str, raw: Any) -> Step:
         on_reject=reject,
         dispatch=dispatch,
         push_identity=identity,
+        description=" ".join(str(raw.get("description") or "").split()),
+        routes=routes,
+        approves=approves,
         **review,
         **extra,
     )
+
+
+def _parse_routes(name: str, raw: dict, kind: str) -> tuple[dict[str, str], str | None]:
+    routes, approves = raw.get("routes"), raw.get("approves")
+    if kind == "code" and (routes is not None or approves is not None):
+        raise WorkflowError(f"step {name!r}: code steps take no routes or approves")
+    if approves is not None and (kind != "human_gate" or routes is not None or not isinstance(approves, str)):
+        raise WorkflowError(f"step {name!r}: approves is a step name, only on gates without routes")
+    if routes is None:
+        return {}, approves
+    if (not isinstance(routes, dict) or not routes or kind == "code"
+            or not all(isinstance(k, str) and ROUTE_NAME.fullmatch(k) and isinstance(v, str)
+                       for k, v in routes.items())):
+        raise WorkflowError(f"step {name!r}: routes must map names like 'quick' to step names")
+    return dict(routes), None
 
 
 def _parse_push(name: str, raw: dict, kind: str) -> tuple[str, str | None]:
@@ -150,7 +184,8 @@ def _parse_code_step(name: str, raw: dict) -> Step:
     if extra["evidence"] and set(extra["evidence"]) != set(call.evidence):
         raise WorkflowError(f"step {name!r}: call.evidence must produce exactly the step's evidence keys")
     extra["evidence"] = extra["evidence"] or tuple(call.evidence)
-    return Step(name, "code", str(raw["role"]), None, "", (), raw["next"], None, (), call=call, **extra)
+    return Step(name, "code", str(raw["role"]), None, "", (), raw["next"], None, (), call=call,
+                description=" ".join(str(raw.get("description") or "").split()), **extra)
 
 
 def _parse_check_fields(name: str, raw: dict, kind: str) -> dict:
@@ -171,20 +206,6 @@ def _parse_check_fields(name: str, raw: dict, kind: str) -> dict:
     return {"check": check, "evidence": tuple(evidence), "on_fail": str(raw["on_fail"])}
 
 
-def _check_placeholders(steps: Mapping[str, Step]) -> None:
-    artifacts = {a for s in steps.values() for a in s.required_artifacts}
-    for step in steps.values():
-        for decl in (step.check, step.call):
-            for ph in sorted(placeholders(decl)) if decl else ():
-                parts = ph.split(".")
-                ok = (decl is step.check and parts[0] == "evidence"
-                      and ".".join(parts[1:]) in step.evidence) or (
-                    len(parts) == 3 and parts[0] == "artifacts" and parts[1] in artifacts
-                    and parts[2] in ("commit", "branch", "path"))
-                if not ok:
-                    raise WorkflowError(f"step {step.name!r}: unknown placeholder {ph}")
-
-
 def _check_review(name: str, review: dict, raw: dict) -> None:
     if not (review["review_of"] and review["on_pass"] and review["on_issues"]):
         raise WorkflowError(f"step {name!r}: review steps need review_of, on_pass and on_issues")
@@ -197,31 +218,58 @@ def _check_review(name: str, review: dict, raw: dict) -> None:
         raise WorkflowError(f"step {name!r}: review steps have no output or next")
 
 
-def parse_workflow(data: dict) -> Workflow:
-    raw_steps = data.get("steps")
-    if not isinstance(raw_steps, dict) or not raw_steps:
-        raise WorkflowError("workflow needs a non-empty 'steps' mapping")
-    steps = {str(n): _parse_step(str(n), raw) for n, raw in raw_steps.items()}
+def _placeholder_problems(steps: Mapping[str, Step]) -> list[str]:
+    artifacts = {a for s in steps.values() for a in s.required_artifacts}
+    problems = []
+    for step in steps.values():
+        for decl in (step.check, step.call):
+            for ph in sorted(placeholders(decl)) if decl else ():
+                parts = ph.split(".")
+                other = steps.get(parts[1]) if len(parts) > 2 else None
+                ok = ph in TASK_FIELDS or (decl is step.check and parts[0] == "evidence"
+                                           and ".".join(parts[1:]) in step.evidence) or (
+                    decl is step.call and parts[0] == "evidence" and other is not None
+                    and ".".join(parts[2:]) in other.evidence) or (
+                    len(parts) == 3 and parts[0] == "artifacts" and parts[1] in artifacts
+                    and parts[2] in ("commit", "branch", "path"))
+                if not ok:
+                    problems.append(f"step {step.name!r}: unknown placeholder {ph}")
+    return problems
+
+
+def graph_problems(steps: Mapping[str, Step], start: str | None) -> list[str]:
+    """Everything wrong with the graph as a whole, sorted and human-readable."""
+    problems = _placeholder_problems(steps)
     for step in steps.values():
         work = steps.get(step.review_of)
         if step.is_review and (work is None or work.kind != "agent" or work.is_review):
-            raise WorkflowError(f"step {step.name!r}: review_of must name an agent work step")
-    _check_placeholders(steps)
-    start = data.get("start")
+            problems.append(f"step {step.name!r}: review_of must name an agent work step")
+        if step.approves is not None:
+            target = steps.get(step.approves)
+            if target is None or target.kind != "agent" or target.is_review or not target.required_artifacts:
+                problems.append(f"step {step.name!r}: approves {step.approves!r} must name an agent "
+                                "work step with artifacts")
+        problems += [f"step {step.name!r} points to unknown step {t!r}"
+                     for t in step.targets if t not in (DONE, CANCELLED, step.review_of) and t not in steps]
     if start not in steps:
-        raise WorkflowError(f"start step {start!r} does not exist")
-    for step in steps.values():
-        for target in step.targets:
-            if target != DONE and target not in steps:
-                raise WorkflowError(f"step {step.name!r} points to unknown step {target!r}")
+        return sorted([*problems, f"start step {start!r} does not exist"])
     seen, todo = set(), [start]
     while todo:
         name = todo.pop()
-        if name in seen or name == DONE:
-            continue
-        seen.add(name)
-        todo.extend(steps[name].targets)
-    unreachable = sorted(set(steps) - seen)
-    if unreachable:
-        raise WorkflowError(f"unreachable steps: {', '.join(unreachable)}")
-    return Workflow(start=start, steps=steps)
+        if name not in seen and name in steps:
+            seen.add(name)
+            todo.extend(steps[name].targets)
+    if seen != set(steps):
+        problems.append(f"unreachable steps: {', '.join(sorted(set(steps) - seen))}")
+    return sorted(problems)
+
+
+def parse_workflow(data: dict, version: int = 1) -> Workflow:
+    raw_steps = data.get("steps")
+    if not isinstance(raw_steps, dict) or not raw_steps:
+        raise WorkflowError("workflow needs a non-empty 'steps' mapping")
+    steps = {str(n): parse_step(str(n), raw) for n, raw in raw_steps.items()}
+    start = data.get("start")
+    if problems := graph_problems(steps, start):
+        raise WorkflowError("; ".join(problems))
+    return Workflow(start, steps, version, {"start": start, "steps": raw_steps})

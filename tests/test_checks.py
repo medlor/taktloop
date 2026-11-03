@@ -90,3 +90,8 @@ def test_read_result_prefers_structured_then_text_then_refuses():
     for bad in ([], ["not json"], ["[1, 2]"]):
         with pytest.raises(CheckUnavailable):
             read_result(None, bad)
+
+
+def test_substitute_values_win():
+    assert substitute({"t": "{{task.title}}", "i": "{{evidence.open_ticket.ticket}}"}, {}, {},
+                      {"task.title": "Add X", "evidence.open_ticket.ticket": "4"}) == {"t": "Add X", "i": "4"}
