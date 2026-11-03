@@ -4,7 +4,8 @@ taktloop
 
 Every person and agent has a named identity with roles, defined in
 `dev-issuer.yaml`: `tobias` (requester, approver, reviewer, factory owner),
-`agent-a` and `agent-b` (planner, builder, reviewer, verifier). A small dev issuer hands out
+`agent-a` and `agent-b` (planner, builder, reviewer). Since M3b the dev issuer also knows
+`orchestrator` (orchestrator, verifier) and `reviewer-bot` (reviewer). A small dev issuer hands out
 tokens; the core accepts only calls with a valid token and checks the
 caller's roles on every operation.
 
@@ -173,12 +174,11 @@ and plan review as in M2; when the plan passes, the task waits at
 3. `agent-a` is refused `code_review` (strict); `agent-b` reviews
    `workspace..change`. *Issues* reopen `build` with the findings; after two
    *issues* verdicts the task waits at `build_escalation`.
-4. `agent-b` verifies: runs the tests, finds the run with
-   `gh run list --commit <sha>`, waits, and completes with
-   `evidence={"ci_run": "<id>"}`. While the run is going, the core refuses
-   ("status is in_progress, expected completed"); a run of an older commit
-   is refused ("head_sha is ..., expected ..."). A red run sends the task
-   back to `build` with `check_failed` feedback naming the run, then through
+4. `verify` is run by the orchestrator (M3b, below), not by a session. While
+   the run is going, the core refuses the orchestrator's attempt ("status is
+   in_progress, expected completed"); a newest run of another commit is
+   refused ("head_sha is ..., expected ..."). A red run sends the task back
+   to `build` with `check_failed` feedback naming the run, then through
    review and verify again. A green run opens `integration_approval`.
 5. `uv run taktloop approve <task>` (as `tobias`, who must not have built
    the change); `agent-a` merges the change commit into `main`, pushes `main`
@@ -198,10 +198,53 @@ and plan review as in M2; when the plan passes, the task waits at
   `integrate` but does not check that `main` contains it or that nothing
   else was merged. Branch protection with required PR approval is planned
   for later.
-- Every step is still pulled by hand from a session; the core has no
-  background loop and does not detect stalls (M3b).
+- Agent steps are still pulled by hand from a session, except the ones M3b
+  pushes (below).
 
 `uv run pytest` runs the tests, including end-to-end tests over a real issuer
 and core (the M3a one against a fake GitHub MCP server). One live test against
 GitHub's real MCP server runs only when `TAKTLOOP_GITHUB_TOKEN` is set in the
 environment or `.env`; CI skips it.
+
+## M3b: the orchestrator
+
+`taktloop orchestrator` is a separate foreground process and a client of the
+core, with its own identity (`orchestrator` in `factory.yaml`). Every
+`tick_seconds` it:
+
+- runs **code steps** (`verify` is now `kind: code`, no LLM): it lists the
+  newest `ci.yml` run on the task branch through GitHub's MCP server and
+  completes the step naming that run; the core still decides, with its own
+  check, as in M3a;
+- **pushes** steps marked `dispatch: push` (`code_review`): it starts a
+  headless Claude Code run as `reviewer-bot`, read-only, which claims and
+  reviews the step;
+- calls the core's `sweep` (expired leases return their steps to open) and
+  reports **stalls** (`report_stall` events, shown by `taktloop task show` and `taktloop steps`).
+
+Setup on top of M3a: create the two new identities with
+`uv run taktloop issuer init` (it adds the missing credentials files), restart
+the issuer, then start the three processes, each in its own terminal:
+
+```sh
+uv run taktloop issuer
+uv run taktloop serve
+uv run taktloop orchestrator             # reads orchestrator: in factory.yaml; Ctrl-C stops it
+```
+
+The orchestrator reads `TAKTLOOP_GITHUB_TOKEN` like the core (environment,
+then `.env` next to `factory.yaml`); it is the same read-only token for now.
+
+**Headless auth rule.** Before each start the orchestrator runs
+`claude auth status`. With a `claude.ai` subscription login it removes
+`ANTHROPIC_API_KEY` from the child's environment (Claude Code would prefer
+the key over the login); otherwise it keeps `ANTHROPIC_API_KEY` if set; with
+neither, the start fails and counts towards the stall rule.
+
+**Run logs.** Each headless run writes stdout and stderr to
+`.taktloop/runs/<step_id>-<n>.log` (gitignored); the orchestrator's own log
+line names the file. The runs use `--permission-mode dontAsk`, may read files
+and run `git diff|log|show|rev-parse`, and cannot edit or write.
+
+Because `verify` is no longer a session step, `agent-a` and `agent-b` lost the
+`verifier` role; only `orchestrator` holds it.

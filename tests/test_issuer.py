@@ -136,7 +136,7 @@ def test_config_parsing(tmp_path):
     assert cfg.state_dir == tmp_path / "state"
     assert cfg.identities["agent-a"] == ROLES
     committed = load_issuer_config(Path(__file__).resolve().parents[1] / "dev-issuer.yaml")
-    assert set(committed.identities) == {"tobias", "agent-a", "agent-b"}
+    assert set(committed.identities) == {"tobias", "agent-a", "agent-b", "orchestrator", "reviewer-bot"}
 
 
 def test_cli_issuer_init(tmp_path, capsys):

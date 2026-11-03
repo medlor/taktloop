@@ -2,6 +2,8 @@ import json
 import re
 from pathlib import Path
 
+import yaml
+
 from taktloop.cli import main
 from taktloop.config import load_config
 
@@ -17,6 +19,17 @@ def test_template_and_repo_factory_load():
     assert a.workflow.start == "design"
     for cfg in (a, b):
         assert (cfg.auth_issuer, cfg.auth_audience, cfg.cli_identity) == ("http://127.0.0.1:8766", "taktloop", "tobias")
+        steps = cfg.workflow.steps
+        assert steps["verify"].kind == "code"
+        assert (steps["code_review"].dispatch, steps["code_review"].push_identity) == ("push", "reviewer-bot")
+        assert cfg.orchestrator.identity == "orchestrator"
+
+
+def test_dev_issuer_gives_verifier_only_to_the_orchestrator():
+    identities = yaml.safe_load((ROOT / "dev-issuer.yaml").read_text())["identities"]
+    holders = {n for n, i in identities.items() if "taktloop:taktloop:verifier" in i["scopes"]}
+    assert holders == {"orchestrator"}
+    assert identities["reviewer-bot"]["scopes"] == ["taktloop:taktloop:reviewer"]
 
 
 def test_bridge_skill_frontmatter():
@@ -46,9 +59,16 @@ def test_bridge_skill_m2():
 
 def test_bridge_skill_m3a():
     text = SKILL.read_text()
-    for word in ("evidence", "ci_run", "gh run list --commit", "check_failed", "push the branch",
-                 "Never force-push", "Never state a result", '"."'):
+    for word in ("check_failed", "push the branch",
+                 "Never force-push", '"."'):
         assert word in text, word
+
+
+def test_bridge_skill_m3b():
+    text = SKILL.read_text()
+    assert "work on taktloop step" in text
+    assert "orchestrator" in text
+    assert "gh run list --commit" not in text
 
 
 def test_plan_review_skill():

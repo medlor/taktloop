@@ -91,3 +91,7 @@ def test_live_github_run():
     run = result["workflow_run"]
     assert (run["head_sha"], run["path"], run["conclusion"]) == (
         "b4c593058b64762308b72f0225f63ccb12b07b98", ".github/workflows/ci.yml", "success")
+    listed = checker("github", "actions_list", {
+        "method": "list_workflow_runs", "owner": "medlor", "repo": "taktloop", "resource_id": "ci.yml",
+        "workflow_runs_filter": {"branch": "main"}})
+    assert listed["workflow_runs"]["workflow_runs"][0]["head_branch"] == "main"

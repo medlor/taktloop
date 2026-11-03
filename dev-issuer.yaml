@@ -6,6 +6,8 @@ identities:
   tobias:  {scopes: [taktloop:taktloop:requester, taktloop:taktloop:approver,
                      taktloop:taktloop:reviewer, taktloop:taktloop:factory_owner]}
   agent-a: {scopes: [taktloop:taktloop:planner, taktloop:taktloop:builder,
-                     taktloop:taktloop:reviewer, taktloop:taktloop:verifier]}
+                     taktloop:taktloop:reviewer]}
   agent-b: {scopes: [taktloop:taktloop:planner, taktloop:taktloop:builder,
-                     taktloop:taktloop:reviewer, taktloop:taktloop:verifier]}
+                     taktloop:taktloop:reviewer]}
+  orchestrator: {scopes: [taktloop:taktloop:orchestrator, taktloop:taktloop:verifier]}
+  reviewer-bot: {scopes: [taktloop:taktloop:reviewer]}

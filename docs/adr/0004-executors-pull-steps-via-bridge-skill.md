@@ -84,6 +84,10 @@ Point 4 matters because superpowers chains its skills: after brainstorming, it m
 
 **Decided:** start with **one bridge skill**. Per-role agent definitions are added later only if they're needed for better steering or clarity.
 
+## Implementation note (M3b)
+
+The taktloop orchestrator is a **separate process** (`taktloop orchestrator`), not part of the core. It is an ordinary MCP client of the core with its own identity and role, and uses the core's tools only (`sweep`, `report_stall`, `claim_step`, `complete_step`, ...). It runs code steps, starts headless executors for steps marked `dispatch: push`, and reports stalls; the core keeps deciding every gate. A headless executor is told its step in the prompt ("work on taktloop step <id>") and the bridge skill claims exactly that step.
+
 ## Consequences
 
 **Positive**

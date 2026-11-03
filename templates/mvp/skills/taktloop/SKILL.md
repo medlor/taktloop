@@ -30,6 +30,10 @@ runs as one identity (for example `agent-a`) and is started like this:
 
 ## Procedure
 
+0. **Headless run.** If the prompt says "work on taktloop step <id>", claim
+   exactly that step (step 2) instead of listing, and **never ask the user
+   anything**: no questions, no choices. If a claim is refused or the context is
+   unclear, release the step with the reason and stop.
 1. **Find work.** Call `list_open_steps`. Offer the steps to the user and let
    them choose; if the session is headless, pick the first one. If there are
    none, say so and stop. The list holds only steps your roles allow.
@@ -55,7 +59,7 @@ runs as one identity (for example `agent-a`) and is started like this:
      the earlier artifact, address every point, and produce a revised version.
      `kind: check_failed` (by `core`) names a CI run that failed on your
      change: find and fix the cause.
-   - Code steps (`workspace`, `build`, `verify`, `integrate`, and reviews of
+   - Code steps (`workspace`, `build`, `integrate`, and reviews of
      `build`) have extra rules: see "Code steps" below.
    - If `review_of` is set, this is a **review step**: run the skill the
      context names (for example `taktloop-plan-review`) on the latest
@@ -104,24 +108,11 @@ this repository. These artifacts are commits, not files: their `path` is
 - **Review of build** (`review_of` is `build`): review
   `git diff <workspace.commit>..<change.commit>` (the latest round of each
   in `artifacts`) against the plan. Do not edit code.
-- **verify** (no artifacts, evidence instead): run the tests locally on the
-  change commit. Then find the GitHub Actions run of that commit with
-  `gh run list --commit <change sha>`, wait until it has finished
-  (`gh run watch <id>`), and complete with the run id as evidence:
-
-      complete_step(step_id, claim_token, evidence={"ci_run": "<run id>"})
-
-  The core asks GitHub itself whether that run is green; you only name the
-  run. **Never state a result**, and never complete with a run you have not
-  checked belongs to the change commit.
-  - Refused with `status is in_progress, expected completed`: the run is not
-    finished. Wait and call again with the same run.
-  - Refused with `head_sha is ..., expected ...`: you named the wrong run (an
-    older commit). Find the run of the change commit.
-  - Refused with "CI check could not run": report the reason to the user and
-    stop, keeping the claim, or release the step.
-  - A red run is not refused: the step closes as failed, the task goes back
-    to `build` with the run as `check_failed` feedback. Stop as usual.
+- **verify** is not a session step. The orchestrator runs it without an LLM
+  (it finds the newest CI run on the task branch and the core checks that run
+  against the change commit). You will not see it in `list_open_steps`; do not
+  claim it. A red run sends the task back to `build` with `check_failed`
+  feedback.
 - **integrate** (`merge` artifact), after the approver approved at
   `integration_approval`: merge the **change commit** (not the branch tip)
   into `main`, push `main` to `origin`, and complete with the merge commit

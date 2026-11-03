@@ -91,7 +91,7 @@ Gates that don't need this strength can be marked soft and accept the agent's ju
 - **External MCP servers run elsewhere and are operated by a third party** (the vendor, the community, or the organization's own platform team). taktloop doesn't run or host them.
 - **taktloop adheres to their authentication and authorization.** Whatever a server requires (OAuth flow, API token, required scopes such as GitHub's `repo` or `actions:read`) is dictated by that server, not by taktloop. taktloop doesn't wrap or translate it.
 - **The details live in the plugin's skill.** The skill that comes with an MCP server documents what it needs: which credential, which scopes per role, and how the executor obtains it. That skill is part of the shareable template, so a factory built from a template knows exactly what to request from its identity provider or the tool's admin.
-- **Credentials are held by whoever calls the server.** An executor uses its own credential (scoped per role, see `rbac.md` §7). The core uses its own credential only for gate checks, code steps and out-of-sync checks such as reading ticket status (for example the read-only GitHub credential in the MVP).
+- **Credentials are held by whoever calls the server.** An executor uses its own credential (scoped per role, see `rbac.md` §7). The core uses its own credential only for gate checks and out-of-sync checks such as reading ticket status (for example the read-only GitHub credential in the MVP). **Code steps** (workflow steps run by plain code, M3b) are called by the taktloop orchestrator, which uses its own credential (in the MVP the same read-only token, a configuration choice); the gate check on the result stays with the core and its credential.
 
 ## Tool allowlists per step
 

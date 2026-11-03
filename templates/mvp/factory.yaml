@@ -8,6 +8,12 @@ mcp_servers:                         # external MCP servers the core itself call
   github:
     url: https://api.githubcopilot.com/mcp/x/actions/readonly
     token_env: TAKTLOOP_GITHUB_TOKEN   # read from the environment, then from .env next to this file
+orchestrator:                        # read by `taktloop orchestrator`
+  identity: orchestrator
+  tick_seconds: 15
+  code_retry_seconds: 60
+  stall_after_minutes: 60
+  max_lease_expiries: 2
 workflow:
   start: design
   steps:
@@ -75,6 +81,8 @@ workflow:
       kind: agent
       role: reviewer
       skill: requesting-code-review
+      dispatch: push                         # the orchestrator starts an executor
+      push: {start: claude-headless, identity: reviewer-bot}
       instructions: >
         Review the change (workspace commit .. change commit) against the plan.
         Return pass, or issues with the critical and important findings. Do not edit code.
@@ -89,12 +97,19 @@ workflow:
       on_approve: verify                     # accept the change despite the review
       on_reject: [build, plan]
     verify:
-      kind: agent
+      kind: code                             # run by the orchestrator, no LLM
       role: verifier
-      skill: verification-before-completion
-      instructions: >
-        Run the tests locally on the change commit. Wait for the GitHub Actions run
-        of that commit to finish, then complete with its run id as evidence.
+      call:                                  # the orchestrator's own MCP call
+        mcp_server: github
+        tool: actions_list
+        args:
+          method: list_workflow_runs
+          owner: medlor
+          repo: taktloop
+          resource_id: ci.yml
+          workflow_runs_filter: {branch: "{{artifacts.change.branch}}"}
+        evidence:                            # evidence key: dotted path into the result
+          ci_run: workflow_runs.workflow_runs.0.id
       evidence: [ci_run]                     # required evidence keys (§6.3)
       check:                                 # the hard gate (§5)
         mcp_server: github

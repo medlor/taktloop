@@ -157,6 +157,16 @@ def fake_github(github_runs):
                                                    **github_runs.get(resource_id, {})}}
 
     @mcp_server.tool()
+    def actions_list(method: str, owner: str, repo: str, resource_id: str,
+                     workflow_runs_filter: dict | None = None) -> dict:
+        branch = (workflow_runs_filter or {}).get("branch")
+        calls.append({"tool": "actions_list", "token": seen[-1], "method": method, "owner": owner,
+                      "repo": repo, "resource_id": resource_id, "filter": workflow_runs_filter})
+        runs = [{"id": int(i), **r} for i, r in sorted(github_runs.items(), key=lambda kv: -int(kv[0]))
+                if r.get("head_branch") == branch]
+        return {"method": method, "workflow_runs": {"total_count": len(runs), "workflow_runs": runs}}
+
+    @mcp_server.tool()
     def sleepy(seconds: float) -> dict:
         time.sleep(seconds)
         return {}

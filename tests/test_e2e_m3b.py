@@ -1,13 +1,19 @@
-"""The M3a demo (spec §9) against a real dev issuer and a real core, both subprocesses, with
-`separation: strict` and the shipped workflow: plan to merge, code review, and the CI gate the core
-checks itself against a fake GitHub MCP server standing in for GitHub's."""
+"""The M3a/M3b demo against a real dev issuer and a real core, both subprocesses, with
+`separation: strict` and the shipped workflow: plan to merge, code review, and the CI gate. An in-process
+orchestrator runs `verify` (and pushes reviews); GitHub is a fake MCP server."""
 
 import json
 import subprocess
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
+import jwt
 import pytest
 
 from taktloop.cli import main
+from taktloop.config import load_config
+from taktloop.external import make_checker
+from taktloop.orchestrator import CoreClient, Orchestrator
 from taktloop.token_client import fetch_token
 from test_e2e_m2 import CORE_HEADER, ROOT, Session, _answers, _free_port, _start, _stop
 
@@ -23,9 +29,11 @@ identities:
   tobias:  {{scopes: [taktloop:taktloop:requester, taktloop:taktloop:approver,
                      taktloop:taktloop:reviewer, taktloop:taktloop:factory_owner]}}
   agent-a: {{scopes: [taktloop:taktloop:planner, taktloop:taktloop:builder,
-                     taktloop:taktloop:reviewer, taktloop:taktloop:verifier]}}
+                     taktloop:taktloop:reviewer]}}
   agent-b: {{scopes: [taktloop:taktloop:planner, taktloop:taktloop:builder,
-                     taktloop:taktloop:reviewer, taktloop:taktloop:verifier]}}
+                     taktloop:taktloop:reviewer]}}
+  orchestrator: {{scopes: [taktloop:taktloop:orchestrator, taktloop:taktloop:verifier]}}
+  reviewer-bot: {{scopes: [taktloop:taktloop:reviewer]}}
 """
 BRANCH = "taktloop/1-version-flag"
 BASE, C1, C2, C3, MERGE = ("0" * 40, "1" * 40, "2" * 40, "3" * 40, "4" * 40)
@@ -35,7 +43,7 @@ CI = ".github/workflows/ci.yml"
 @pytest.fixture
 def factory(tmp_path, monkeypatch, request, fake_github):
     """Issuer and core subprocesses, the core's GitHub server pointed at the fake.
-    Yields (core URL, credentials dir, fake GitHub calls)."""
+    Yields (core URL, credentials dir, fake GitHub calls, core config path)."""
     github_url, calls = fake_github
     issuer = f"http://127.0.0.1:{_free_port()}"
     issuer_cfg = tmp_path / "dev-issuer.yaml"
@@ -59,7 +67,7 @@ def factory(tmp_path, monkeypatch, request, fake_github):
     monkeypatch.setenv("TAKTLOOP_TOKEN", fetch_token("tobias", creds))  # the CLI runs as tobias
     core_proc = _start(["--config", str(core_cfg), "serve"], tmp_path / "core.log",
                        lambda: main(["--url", url, "task", "list"]) == 0)
-    yield url, creds, calls
+    yield url, creds, calls, core_cfg
     _stop(core_proc)
 
 
@@ -79,8 +87,15 @@ class Agent(Session):
                          findings=findings)
 
 
-def test_m3a_demo(factory, github_runs, capsys):
-    url, creds, calls = factory
+class Clock:
+    now = datetime(2026, 11, 3, tzinfo=timezone.utc)
+
+    def __call__(self):
+        return self.now
+
+
+def test_m3b_demo(factory, github_runs, capsys):
+    url, creds, calls, core_cfg = factory
     cli = lambda *a: main(["--url", url, *a])  # noqa: E731
     agent_a = Agent(url, fetch_token("agent-a", creds))
     agent_b = Agent(url, fetch_token("agent-b", creds))
@@ -114,41 +129,54 @@ def test_m3a_demo(factory, github_runs, capsys):
     agent_a.work("build", "change", C2)
     assert agent_b.review("code_review", "pass")["current_step"] == "verify"
 
-    # 5. agent-b verifies: a run still going and a run of an older commit are refused
-    github_runs["101"] = {"head_sha": C2, "path": CI, "status": "in_progress", "conclusion": None}
-    github_runs["100"] = {"head_sha": C1, "path": CI, "status": "completed", "conclusion": "success"}
-    github_runs["102"] = {"head_sha": C2, "path": CI, "status": "completed", "conclusion": "failure"}
-    verify_id, claim = agent_b.claim("verify")
-    ctx = agent_b.call("get_step_context", step_id=verify_id)
-    assert ctx["skill"] == "verification-before-completion"
-    reason = agent_b.refused("complete_step", step_id=verify_id, claim_token=claim,
-                             evidence={"ci_run": "101"})
-    assert reason.endswith(": workflow_run.status is in_progress, expected completed"), reason
-    reason = agent_b.refused("complete_step", step_id=verify_id, claim_token=claim,
-                             evidence={"ci_run": "100"})
-    assert reason.endswith(f": workflow_run.head_sha is {C1}, expected {C2}"), reason
-    task = agent_b.call("get_task", task_id=tid)  # refusals change nothing
-    assert (task["current_step"], task["step_id"]) == ("verify", verify_id)
-    assert task["waiting_for"].startswith("verify in progress by agent-b"), task["waiting_for"]
+    # 5. the orchestrator runs verify: an unfinished run is refused, a red run goes back to build
+    cfg, clock, launched = load_config(core_cfg), Clock(), []
 
-    # 6. a red run on the reviewed commit sends the task back to build with the run as feedback
-    red = agent_b.call("complete_step", step_id=verify_id, claim_token=claim,
-                       evidence={"ci_run": "102"})
-    assert red["current_step"] == "build"
+    def launch(step_id, token, shas):
+        launched.append((step_id, token))
+        return type("Proc", (), {"poll": lambda self: None, "kill": lambda self: None})(), Path("x.log")
+
+    orch = Orchestrator(cfg, CoreClient(url, "orchestrator", creds).call,
+                        make_checker(cfg.mcp_servers, {"TAKTLOOP_GITHUB_TOKEN": "fake-gh-7f3a"}, {}),
+                        launch, lambda identity: fetch_token(identity, creds), clock, lambda line: None)
+    github_runs["101"] = {"head_sha": C2, "head_branch": BRANCH, "path": CI, "status": "in_progress",
+                          "conclusion": None}
+    orch.tick()
+    task = agent_b.call("get_task", task_id=tid)  # the refusal changed nothing
+    verify_id = task["step_id"]
+    assert (task["current_step"], launched) == ("verify", [])
+    assert task["waiting_for"].startswith("verify in progress by orchestrator"), task["waiting_for"]
+    reason = agent_b.refused("claim_step", step_id=verify_id)
+    assert "requires role verifier" in reason, reason
+    github_runs["102"] = {"head_sha": C2, "head_branch": BRANCH, "path": CI, "status": "completed",
+                          "conclusion": "failure"}
+    clock.now += timedelta(seconds=61)
+    orch.tick()
+    assert agent_a.call("get_task", task_id=tid)["current_step"] == "build"
     ctx = agent_a.call("get_step_context", step_id=agent_a.open_step("build"))
     assert (ctx["round"], ctx["feedback"]["kind"], ctx["feedback"]["by"]) == (3, "check_failed", "core")
     assert "ci_run=102" in ctx["feedback"]["text"]
     assert "workflow_run.conclusion is failure, expected success" in ctx["feedback"]["text"]
-    agent_a.work("build", "change", C3)
+
+    # 6. build round 3 opens a pushed review: one tick starts one headless run as reviewer-bot
+    assert agent_a.work("build", "change", C3)["current_step"] == "code_review"
+    clock.now += timedelta(seconds=61)
+    orch.tick()
+    orch.tick()
+    assert [sid for sid, _ in launched] == [agent_b.open_step("code_review")]
+    assert jwt.decode(launched[0][1], options={"verify_signature": False})["sub"] == "reviewer-bot"
     assert agent_b.review("code_review", "pass")["current_step"] == "verify"
-    github_runs["103"] = {"head_sha": C3, "path": CI, "status": "completed", "conclusion": "success"}
-    verify_id, claim = agent_b.claim("verify")
-    green = agent_b.call("complete_step", step_id=verify_id, claim_token=claim,
-                         evidence={"ci_run": "103"})
-    assert green["current_step"] == "integration_approval"
-    assert {(c["token"], c["method"], c["owner"], c["repo"]) for c in calls} == {
-        ("Bearer fake-gh-7f3a", "get_workflow_run", "medlor", "taktloop")}
-    assert [c["resource_id"] for c in calls] == ["101", "100", "102", "103"]
+    github_runs["103"] = {"head_sha": C3, "head_branch": BRANCH, "path": CI, "status": "completed",
+                          "conclusion": "success"}
+    clock.now += timedelta(seconds=61)
+    orch.tick()
+    assert agent_b.call("get_task", task_id=tid)["current_step"] == "integration_approval"
+    assert [(c["tool"], c["token"], c.get("resource_id")) for c in calls] == [
+        ("actions_list", "Bearer fake-gh-7f3a", "ci.yml"), ("actions_get", "Bearer fake-gh-7f3a", "101"),
+        ("actions_list", "Bearer fake-gh-7f3a", "ci.yml"), ("actions_get", "Bearer fake-gh-7f3a", "102"),
+        ("actions_list", "Bearer fake-gh-7f3a", "ci.yml"), ("actions_get", "Bearer fake-gh-7f3a", "103")]
+    assert {(c["owner"], c["repo"]) for c in calls} == {("medlor", "taktloop")}
+    assert all(c["filter"] == {"branch": BRANCH} for c in calls if c["tool"] == "actions_list")
 
     # 7. tobias approves the integration; agent-a merges and pushes main
     assert cli("approve", str(tid)) == 0
@@ -163,8 +191,7 @@ def test_m3a_demo(factory, github_runs, capsys):
         ("merge", MERGE, ".")]
     checks = [e for e in task["history"] if e["operation"] == "check"]
     assert [(e["subject"], e["step"], e["detail"]["result"]) for e in checks] == [
-        ("core", "verify", "mismatch"), ("core", "verify", "mismatch"),
-        ("core", "verify", "fail"), ("core", "verify", "pass")]
+        ("core", "verify", "mismatch"), ("core", "verify", "fail"), ("core", "verify", "pass")]
     assert checks[-1]["detail"]["observed"] == {
         "workflow_run.head_sha": C3, "workflow_run.path": CI, "workflow_run.status": "completed",
         "workflow_run.conclusion": "success"}
@@ -177,10 +204,10 @@ def test_m3a_demo(factory, github_runs, capsys):
         ("agent-b", "code_review", "issues", "build"),
         ("agent-a", "build", "completed", "code_review"),
         ("agent-b", "code_review", "pass", "verify"),
-        ("agent-b", "verify", "failed", "build"),
+        ("orchestrator", "verify", "failed", "build"),
         ("agent-a", "build", "completed", "code_review"),
         ("agent-b", "code_review", "pass", "verify"),
-        ("agent-b", "verify", "completed", "integration_approval"),
+        ("orchestrator", "verify", "completed", "integration_approval"),
         ("agent-a", "integrate", "completed", "done")]
 
     capsys.readouterr()
