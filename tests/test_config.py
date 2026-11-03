@@ -169,3 +169,24 @@ def test_product_checkout_relative_to_factory_dir(tmp_path: Path):
     (tmp_path / "flow.yaml").write_text(ONLY)
     cfg = load_config(put(tmp_path, FACTORY + "workflow_file: flow.yaml\n"))
     assert cfg.workflow_path == tmp_path / "flow.yaml"
+
+
+@pytest.mark.parametrize("version", ["~", "[1]", "true", "x", "1.5"])
+def test_bad_version_names_the_file(tmp_path: Path, version: str):
+    with pytest.raises(WorkflowError, match=r"workflow.yaml: version must be an integer"):
+        load_config(put(tmp_path, workflow=f"version: {version}\n" + ONLY))
+
+
+@pytest.mark.parametrize("sync", ["x", "{a: [1]}", "{a: {mcp_server: tickets, tool: t, expect: {c: d}, every_minutes: x}}",
+                                  "{a: {mcp_server: tickets, tool: t, expect: {c: d}, every_minutes: 0}}"])
+def test_bad_sync_shapes_are_workflow_errors(tmp_path: Path, sync: str):
+    with pytest.raises(WorkflowError, match=r"factory.yaml: sync"):
+        load_config(put(tmp_path, FACTORY + SYNC + f"sync: {sync}\n"))
+
+
+def test_data_sha_ignores_formatting_and_version(tmp_path: Path):
+    wf = workflow_file.read(put(tmp_path).with_name("workflow.yaml"))
+    a, b = tmp_path / "a.yaml", tmp_path / "b.yaml"
+    workflow_file.write(a, wf.data, 1)
+    workflow_file.write(b, dict(reversed(list(wf.data.items()))), 7)
+    assert workflow_file.data_sha(workflow_file.read(a).data) == workflow_file.data_sha(workflow_file.read(b).data)

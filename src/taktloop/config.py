@@ -82,11 +82,17 @@ def load_config(path: Path) -> FactoryConfig:
             if decl and decl.mcp_server not in servers:
                 raise WorkflowError(f"step {step_name!r}: {what} uses unknown mcp_server {decl.mcp_server!r}")
     sync = {}
-    for name, raw in (data.get("sync") or {}).items():
-        raw = dict(raw)
-        every = int(raw.pop("every_minutes", 5))
+    raw_sync = data.get("sync") or {}
+    if not isinstance(raw_sync, dict):
+        raise WorkflowError(f"{path.name}: sync must be a mapping")
+    for name, raw in raw_sync.items():
         try:
-            check = parse_check(raw)
+            if not isinstance(raw, dict):
+                raise ValueError("must be a mapping")
+            every = raw.get("every_minutes", 5)
+            if type(every) is not int or every < 1:
+                raise ValueError("every_minutes must be a positive integer")
+            check = parse_check({k: v for k, v in raw.items() if k != "every_minutes"})
         except ValueError as e:
             raise WorkflowError(f"{path.name}: sync.{name}: {e}") from e
         if check.mcp_server not in servers:

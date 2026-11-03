@@ -18,9 +18,12 @@ def read(path: Path) -> Workflow:
         raise WorkflowError(f"{path}: {' '.join(str(e).split())}") from e
     if not isinstance(data, dict):
         raise WorkflowError(f"{path}: expected a mapping with start and steps")
+    version = data.pop("version", 1)
+    if type(version) is not int:
+        raise WorkflowError(f"{path}: version must be an integer")
     try:
-        return parse_workflow(data, int(data.pop("version", 1)))
-    except (WorkflowError, ValueError) as e:
+        return parse_workflow(data, version)
+    except WorkflowError as e:
         raise WorkflowError(f"{path}: {e}") from e
 
 

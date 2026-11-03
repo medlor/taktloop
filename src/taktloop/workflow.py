@@ -1,4 +1,4 @@
-"""Parse and validate the ``workflow:`` block of factory.yaml. Pure, no I/O."""
+"""Parse and validate a workflow definition (workflow.yaml). Pure, no I/O."""
 
 import copy
 import re
