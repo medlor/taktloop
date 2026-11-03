@@ -466,3 +466,28 @@ def test_serve_refuses_values_json_cannot_hold(tmp_path, capsys):
     err = capsys.readouterr().err
     assert err.startswith("taktloop: ") and "workflow.yaml" in err
     assert err.count("\n") == 1 and "Traceback" not in err
+
+
+def test_render_workflow():
+    d = {"version": 1, "draft": True, "base_version": 1, "problems": ["step 'a' points to unknown step 'z'"],
+         "data": {"start": "a", "steps": {
+             "a": {"kind": "agent", "role": "b", "next": "z", "description": "Does a"},
+             "g": {"kind": "human_gate", "role": "approver", "on_approve": "a", "on_reject": ["a"]},
+             "t": {"kind": "agent", "role": "triage", "routes": {"quick": "a"}}}}}
+    assert cli_commands.render_workflow(d).splitlines() == [
+        "draft based on version 1", "a: agent b → z", "  Does a", "g: human_gate approver → a, a",
+        "t: agent triage → quick:a", "problem: step 'a' points to unknown step 'z'"]
+    assert cli_commands.render_workflow({**d, "draft": False, "problems": []}).startswith("version 1\n")
+
+
+def test_workflow_approve_names_the_drafts_base(monkeypatch, capsys):
+    calls = []
+
+    async def fake(url, tool, args, token, client="x"):
+        calls.append((tool, args))
+        return {"version": 3, "draft": False, "base_version": None, "problems": [],
+                "data": {"start": "a", "steps": {}}} if tool == "approve_workflow" else {"base_version": 2}
+    monkeypatch.setattr(cli_commands, "_call_tool", fake)
+    assert cli.main(["--url", "http://127.0.0.1:1", "workflow", "approve"]) == 0
+    assert calls == [("get_workflow", {"draft": True}), ("approve_workflow", {"base_version": 2})]
+    assert capsys.readouterr().out.startswith("version 3")

@@ -72,7 +72,8 @@ def prepare(cfg: FactoryConfig) -> Service:
     workflow = read_workflow(cfg.workflow_path)
     cfg.database.parent.mkdir(parents=True, exist_ok=True)
     service = Service(Store(cfg.database), workflow, timedelta(minutes=cfg.lease_minutes),
-                      separation=cfg.separation, checker=build_checker(cfg))
+                      separation=cfg.separation, checker=build_checker(cfg),
+                      servers=cfg.mcp_servers.keys(), workflow_path=cfg.workflow_path)
     if service.live_version != workflow.version:
         write_workflow(cfg.workflow_path, service.live_data(), service.live_version)
     return service

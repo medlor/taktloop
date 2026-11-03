@@ -15,7 +15,8 @@ from taktloop.workflow import parse_workflow
 TOOLS = {
     "create_task", "list_tasks", "get_task", "list_open_steps", "claim_step",
     "get_step_context", "heartbeat", "complete_step", "release_step", "decide_gate",
-    "override_review", "sweep", "report_stall", "list_events",
+    "override_review", "sweep", "report_stall", "list_events", "get_workflow", "put_step",
+    "remove_step", "set_start", "discard_draft", "approve_workflow",
 }  # fmt: skip
 
 pytestmark = pytest.mark.anyio
@@ -138,3 +139,15 @@ async def test_sweep_under_orchestrator_role(client_for):
         async with client_for() as c:
             r = await c.call_tool("sweep", {})
     assert [(s["step"], s["status"]) for s in r.structured_content["steps"]] == [("design", "open")]
+
+
+async def test_workflow_tools_round_trip(client_for):
+    async with client_for() as c:
+        step = {"kind": "agent", "role": "b", "skill": "s", "output": {"artifacts": ["x"]}, "next": "nowhere"}
+        r = await c.call_tool("put_step", {"name": "lint", "definition": step})
+        assert r.structured_content["draft"] and r.structured_content["problems"]
+        bad = await c.call_tool("put_step", {"name": "x", "definition": {"kind": "teleport", "role": "r"}})
+        assert bad.is_error
+        await c.call_tool("discard_draft", {})
+        assert (await c.call_tool("get_workflow", {"draft": True})).is_error
+        assert (await c.call_tool("get_workflow", {})).structured_content["version"] == 1

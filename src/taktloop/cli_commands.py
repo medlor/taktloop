@@ -16,7 +16,8 @@ from mcp import Client, Implementation
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared._httpx_utils import create_mcp_http_client
 
-from taktloop.cli_render import render_steps, render_summary, render_task_detail, render_task_list
+from taktloop.cli_render import (
+    render_steps, render_summary, render_task_detail, render_task_list, render_workflow)
 from taktloop.token_client import TokenError, fetch_token
 
 TEMPLATES = Path(__file__).resolve().parents[2] / "templates"
@@ -100,6 +101,16 @@ def _request(ns) -> tuple[str, dict, object]:
         if ns.sub == "list":
             return "list_tasks", {"include_closed": ns.all}, render_task_list
         return "get_task", {"task_id": ns.id}, render_task_detail
+    if ns.cmd == "workflow":
+        if ns.sub in ("show", "draft"):
+            return "get_workflow", {"version": getattr(ns, "version", None), "draft": ns.sub == "draft"}, render_workflow
+        if ns.sub == "put":
+            args = {"name": ns.name, "definition": yaml.safe_load(ns.file.read_text())}
+            return "put_step", args, render_workflow
+        if ns.sub == "discard":
+            return "discard_draft", {}, lambda _: "draft discarded"
+        tool = {"remove": "remove_step", "start": "set_start", "approve": "approve_workflow"}[ns.sub]
+        return tool, {} if ns.sub == "approve" else {"name": ns.name}, render_workflow
     if ns.cmd in ("approve", "reject"):
         args = {"task_id": ns.task, "decision": ns.cmd, "gate": ns.gate}
         if ns.cmd == "reject":
@@ -137,6 +148,12 @@ async def _review(url: str, ns, token: str) -> dict:
                    "reason": "taktloop review: verdict rejected"}
         await _call_tool(url, "release_step", release, token)
         raise
+
+
+async def _approve_workflow(url: str, ns, token: str) -> dict:
+    """`taktloop workflow approve`: approve the draft as it stands, naming its base version."""
+    draft = await _call_tool(url, "get_workflow", {"draft": True}, token)
+    return await _call_tool(url, "approve_workflow", {"base_version": draft["base_version"]}, token)
 
 
 def _serve(cfg) -> int:
@@ -217,7 +234,8 @@ def run_client(ns, cfg) -> int:
         return 2
     tool, args, render = _request(ns)
     try:
-        call = (_review, url, ns) if ns.cmd == "review" else (_call_tool, url, tool, args)
+        special = _review if ns.cmd == "review" else _approve_workflow if tool == "approve_workflow" else None
+        call = (special, url, ns) if special else (_call_tool, url, tool, args)
         result = anyio.run(*call, _bearer(ns, cfg))
     except ToolRejected as e:
         print(f"rejected: {e}", file=sys.stderr)

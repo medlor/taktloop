@@ -88,6 +88,10 @@ def parse_step(name: str, raw: Any) -> Step:
         raise WorkflowError(
             f"step {name!r}: kind {kind!r} is not supported yet (supported: {', '.join(KINDS)})"
         )
+    for key in ("next", "on_approve", "on_reject", "on_fail", *(k for k in REVIEW_KEYS if k != "max_issue_rounds")):
+        v = raw.get(key)
+        if not (v is None or isinstance(v, str) or (key == "on_reject" and isinstance(v, list) and all(isinstance(t, str) for t in v))):
+            raise WorkflowError(f"step {name!r}: {key} must be a step name")
     if kind == "code":
         return _parse_code_step(name, raw)
     dispatch, identity = _parse_push(name, raw, kind)
@@ -97,7 +101,11 @@ def parse_step(name: str, raw: Any) -> Step:
     review = {k: raw.get(k) for k in REVIEW_KEYS}
     if kind == "agent":
         skill = raw.get("skill")
-        artifacts = tuple((raw.get("output") or {}).get("artifacts") or ())
+        out = raw.get("output") or {}
+        artifacts = out.get("artifacts") or () if isinstance(out, dict) else None
+        if artifacts is None or not isinstance(artifacts, (list, tuple)) or not all(isinstance(a, str) for a in artifacts):
+            raise WorkflowError(f"step {name!r}: output must be a mapping with a list of artifact names")
+        artifacts = tuple(artifacts)
         nxt = raw.get("next")
         if not skill:
             raise WorkflowError(f"step {name!r}: agent steps need a skill")

@@ -91,3 +91,14 @@ def render_steps(d: dict) -> str:
         f"(round {s['round']}, skill {s['skill']})"
         for s in d["steps"]
     )
+
+
+def render_workflow(d: dict) -> str:
+    lines = [f"draft based on version {d['base_version']}" if d["draft"] else f"version {d['version']}"]
+    for name, s in d["data"]["steps"].items():
+        flow = [t for k in ("next", "on_approve", "on_reject", "on_pass", "on_issues", "on_escalate", "on_fail")
+                for t in ([s[k]] if isinstance(s.get(k), str) else s.get(k) or [])]
+        flow += [f"{r}:{t}" for r, t in (s.get("routes") or {}).items()]
+        lines.append(f"{name}: {s['kind']} {s['role']} → {', '.join(flow)}")
+        lines += [f"  {s['description']}"] if s.get("description") else []
+    return "\n".join(lines + [f"problem: {p}" for p in d["problems"]])

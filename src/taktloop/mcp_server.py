@@ -20,6 +20,7 @@ from taktloop.models import (
     TaskDetail,
     TaskList,
     TaskSummary,
+    WorkflowView,
 )
 from taktloop.service import Caller, Rejected, Service
 
@@ -169,5 +170,38 @@ def build_server(service: Service, factory: str, verifier: JwtVerifier | None,
     def report_stall(ctx: Context, step_id: int, reason: str) -> TaskSummary:
         """Orchestrator only: flag an open or claimed step as stalled (reported once per run)."""
         return service.report_stall(caller(ctx), step_id, reason)
+
+    @tool
+    def get_workflow(ctx: Context, version: int | None = None, draft: bool = False) -> WorkflowView:
+        """Show the live workflow (or a version, or the draft) as data with its problem list."""
+        return service.get_workflow(caller(ctx), version, draft)
+
+    @tool
+    def put_step(ctx: Context, name: str, definition: dict) -> WorkflowView:
+        """Factory assistant or owner: add or replace one step in the workflow draft (it starts as
+        a copy of the live version). A malformed step is refused; gaps (a target that does not
+        exist yet) come back as problems."""
+        return service.put_step(caller(ctx), name, definition)
+
+    @tool
+    def remove_step(ctx: Context, name: str) -> WorkflowView:
+        """Factory assistant or owner: remove a step from the workflow draft."""
+        return service.remove_step(caller(ctx), name)
+
+    @tool
+    def set_start(ctx: Context, name: str) -> WorkflowView:
+        """Factory assistant or owner: set the draft's start step."""
+        return service.set_start(caller(ctx), name)
+
+    @tool
+    def discard_draft(ctx: Context) -> None:
+        """Factory assistant or owner: drop the workflow draft."""
+        service.discard_draft(caller(ctx))
+
+    @tool
+    def approve_workflow(ctx: Context, base_version: int) -> WorkflowView:
+        """Factory owner only: make the draft the next live version (writes workflow.yaml).
+        `base_version` is the version the draft is based on."""
+        return service.approve_workflow(caller(ctx), base_version)
 
     return server

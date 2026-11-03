@@ -19,6 +19,9 @@ ROLES = {
     "override_review": "approver",
     "sweep": "orchestrator", "list_events": "orchestrator", "report_stall": "orchestrator",
     "release_step --force": "factory_owner",
+    "get_workflow": ANY, "approve_workflow": "factory_owner",
+    **dict.fromkeys(("put_step", "remove_step", "set_start", "discard_draft"),
+                    ("factory_assistant", "factory_owner")),
 }  # fmt: skip
 
 
@@ -32,5 +35,6 @@ def require(caller: Caller, operation: str, step: Step | None = None) -> None:
         if not caller.roles:
             raise Rejected(f"{operation} requires a taktloop role; you have {have}")
         return
-    if role not in caller.roles:
-        raise Rejected(f"{operation} requires role {role}; you have {have}")
+    wanted = role if isinstance(role, tuple) else (role,)  # a tuple means any of
+    if not caller.roles.intersection(wanted):
+        raise Rejected(f"{operation} requires role {' or '.join(wanted)}; you have {have}")

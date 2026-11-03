@@ -129,3 +129,11 @@ class TaskList(BaseModel):
 
 class OpenStepList(BaseModel):
     steps: list[OpenStep]
+
+
+class WorkflowView(BaseModel):
+    version: int  # a draft: the version it is based on
+    draft: bool
+    base_version: int | None
+    data: dict
+    problems: list[str]

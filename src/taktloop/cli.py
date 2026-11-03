@@ -66,6 +66,15 @@ def _parser() -> argparse.ArgumentParser:
     rel.add_argument("--force", action="store_true", required=True)
     rel.add_argument("--reason", required=True)
     sub.add_parser("steps", parents=client, help="list open steps")
+    wf = sub.add_parser("workflow", parents=client, help="show and change the workflow").add_subparsers(dest="sub", required=True)
+    wf.add_parser("show", parents=client).add_argument("--version", type=int)
+    for name, arg in (("draft", None), ("put", "name"), ("remove", "name"), ("start", "name"),
+                      ("discard", None), ("approve", None)):
+        cmd = wf.add_parser(name, parents=client)
+        if arg:
+            cmd.add_argument(arg)
+        if name == "put":
+            cmd.add_argument("file", type=Path)
     iss = sub.add_parser("issuer", help="run the dev issuer (development only)")
     iss.add_argument("--config", type=Path, default=Path("dev-issuer.yaml"))
     iss_init = iss.add_subparsers(dest="sub").add_parser("init", help="create the signing key and credentials")

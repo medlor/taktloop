@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 from taktloop.external import Checker
@@ -52,7 +53,10 @@ class ServiceBase:
     def __init__(self, store: Store, workflow: Workflow,
                  lease: timedelta = timedelta(minutes=30),
                  clock: Callable[[], datetime] = _utc_now, separation: str = "off",
-                 checker: Checker | None = None) -> None:
+                 checker: Checker | None = None, servers: Collection[str] = (),
+                 workflow_path: Path | None = None,
+                 tools_check: Callable[[Workflow], str | None] | None = None) -> None:
+        self._servers, self._workflow_path, self._tools_check = set(servers), workflow_path, tools_check
         self._store, self._lease, self._clock = store, lease, clock
         self._separation, self._checker = separation, checker
         self._versions: dict[int, Workflow] = {}

@@ -7,13 +7,14 @@ from taktloop.ops_base import Caller, _Ids
 from taktloop.ops_gates import GateOps
 from taktloop.ops_orchestrator import OrchestratorOps
 from taktloop.ops_steps import StepOps
+from taktloop.ops_workflow import WorkflowOps
 from taktloop.rules import Rejected, latest_rounds
 from taktloop.store import StepRunRow, Tx
 
 __all__ = ["Caller", "Rejected", "Service"]
 
 
-class Service(StepOps, GateOps, OrchestratorOps):
+class Service(StepOps, GateOps, OrchestratorOps, WorkflowOps):
     def create_task(self, caller: Caller, title: str, request: str = "",
                     route: str | None = None) -> TaskSummary:
         def body(tx: Tx, ids: _Ids) -> TaskSummary:
