@@ -12,6 +12,15 @@ from taktloop.workflow import Workflow, WorkflowError, parse_workflow
 
 
 @dataclass(frozen=True)
+class OrchestratorConfig:
+    identity: str
+    tick_seconds: int = 15
+    code_retry_seconds: int = 60
+    stall_after_minutes: int = 60
+    max_lease_expiries: int = 2
+
+
+@dataclass(frozen=True)
 class FactoryConfig:
     factory: str
     host: str
@@ -26,6 +35,8 @@ class FactoryConfig:
     credentials: Path = Path(".taktloop/credentials")  # next to factory.yaml, like the database
     mcp_servers: Mapping[str, ExternalServer] = field(default_factory=dict)
     env_file: Path = Path(".env")
+    orchestrator: OrchestratorConfig | None = None
+    root: Path = Path(".")  # the directory of factory.yaml
 
     @property
     def url(self) -> str:
@@ -52,8 +63,15 @@ def load_config(path: Path) -> FactoryConfig:
         servers[str(name)] = ExternalServer(str(name), str(raw["url"]), str(raw["token_env"]))
     workflow = parse_workflow(data["workflow"])
     for step_name, step in workflow.steps.items():
-        if step.check and step.check.mcp_server not in servers:
-            raise WorkflowError(f"step {step_name!r}: check uses unknown mcp_server {step.check.mcp_server!r}")
+        for what, decl in (("check", step.check), ("call", step.call)):
+            if decl and decl.mcp_server not in servers:
+                raise WorkflowError(f"step {step_name!r}: {what} uses unknown mcp_server {decl.mcp_server!r}")
+    orch = data.get("orchestrator")
+    if orch is not None:
+        if not isinstance(orch, dict) or not orch.get("identity"):
+            raise WorkflowError(f"{path.name}: orchestrator needs an identity")
+        keys = ("tick_seconds", "code_retry_seconds", "stall_after_minutes", "max_lease_expiries")
+        orch = OrchestratorConfig(str(orch["identity"]), **{k: int(orch[k]) for k in keys if k in orch})
     return FactoryConfig(
         factory=str(data.get("factory") or path.resolve().parent.name),
         host=str(server.get("host", "127.0.0.1")),
@@ -68,4 +86,6 @@ def load_config(path: Path) -> FactoryConfig:
         credentials=path.parent / ".taktloop/credentials",
         mcp_servers=servers,
         env_file=path.parent / ".env",
+        orchestrator=orch,
+        root=path.parent,
     )

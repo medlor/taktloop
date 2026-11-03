@@ -81,3 +81,30 @@ def test_check_with_unknown_server_is_refused(tmp_path: Path):
     path.write_text(CHECKED)
     with pytest.raises(WorkflowError, match="step 'only': check uses unknown mcp_server 'github'"):
         load_config(path)
+
+
+def test_orchestrator_block(tmp_path: Path):
+    path = tmp_path / "factory.yaml"
+    path.write_text(WORKFLOW)
+    cfg = load_config(path)
+    assert cfg.orchestrator is None
+    assert cfg.root == path.parent
+    path.write_text(WORKFLOW + "orchestrator: {identity: orchestrator}\n")
+    orch = load_config(path).orchestrator
+    assert (orch.identity, orch.tick_seconds, orch.code_retry_seconds) == ("orchestrator", 15, 60)
+    assert (orch.stall_after_minutes, orch.max_lease_expiries) == (60, 2)
+    path.write_text(WORKFLOW + "orchestrator: {tick_seconds: 5}\n")
+    with pytest.raises(WorkflowError, match="identity"):
+        load_config(path)
+
+
+def test_code_step_unknown_server(tmp_path: Path):
+    path = tmp_path / "factory.yaml"
+    path.write_text(WORKFLOW.replace("""      kind: agent
+      role: planner
+      skill: brainstorming
+      output: {artifacts: [doc]}""", """      kind: code
+      role: verifier
+      call: {mcp_server: gitlab, tool: t, evidence: {x: id}}"""))
+    with pytest.raises(WorkflowError, match="gitlab"):
+        load_config(path)

@@ -80,7 +80,7 @@ def test_rejects_unreachable_step():
 
 def test_rejects_unsupported_kind():
     data = mvp()
-    data["steps"]["plan"]["kind"] = "code"
+    data["steps"]["plan"]["kind"] = "robot"
     with pytest.raises(WorkflowError, match="not supported yet") as exc:
         parse_workflow(data)
     assert "plan" in str(exc.value)
@@ -276,3 +276,79 @@ def test_check_step_refusals(wf, msg):
 def test_check_step_needs_no_artifacts():
     step = parse_workflow(_verify_workflow()).step("verify")
     assert step.required_artifacts == ()
+
+
+def _code_workflow(**changes):
+    verify = {
+        "kind": "code", "role": "verifier",
+        "call": {"mcp_server": "github", "tool": "actions_list",
+                 "args": {"workflow_runs_filter": {"branch": "{{artifacts.change.branch}}"}},
+                 "evidence": {"ci_run": "workflow_runs.workflow_runs.0.id"}},
+        "check": _verify_workflow()["steps"]["verify"]["check"],
+        "evidence": ["ci_run"], "next": "done", "on_fail": "work",
+    }
+    verify.update(changes)
+    wf = _verify_workflow()
+    wf["steps"]["verify"] = {k: v for k, v in verify.items() if v is not None}
+    return wf
+
+
+def test_code_step_loads():
+    step = parse_workflow(_code_workflow()).step("verify")
+    assert step.kind == "code"
+    assert step.call.tool == "actions_list"
+    assert step.evidence == ("ci_run",)
+    assert step.check is not None
+    assert "work" in step.targets
+
+
+@pytest.mark.parametrize("changes", [
+    {"skill": "s"},
+    {"output": {"artifacts": ["x"]}},
+    {"next": None},
+    {"call": None},
+    {"evidence": ["other"]},
+    {"call": {"mcp_server": "github", "tool": "t", "args": {"a": ["{{evidence.ci_run}}"]},
+              "evidence": {"ci_run": "id"}}},
+    {"dispatch": "push"},
+])
+def test_code_step_refusals(changes):
+    with pytest.raises(WorkflowError, match="verify"):
+        parse_workflow(_code_workflow(**changes))
+
+
+def _push_workflow(**push_changes):
+    wf = reviewed()
+    wf["steps"]["plan_review"] = {
+        **wf["steps"]["plan_review"],
+        "dispatch": "push", "push": {"start": "claude-headless", "identity": "reviewer-bot"},
+    }
+    wf["steps"]["plan_review"]["push"].update(push_changes)
+    return wf
+
+
+def test_push_step_loads():
+    step = parse_workflow(_push_workflow()).step("plan_review")
+    assert (step.dispatch, step.push_identity) == ("push", "reviewer-bot")
+    assert parse_workflow(reviewed()).step("plan_review").dispatch == "pull"
+
+
+@pytest.mark.parametrize("wf, msg", [
+    (_push_workflow(start="codex"), "not supported"),
+    (_push_workflow(identity=""), "push.identity"),
+    (_push_workflow(identity=None), "push.identity"),
+])
+def test_push_refusals(wf, msg):
+    with pytest.raises(WorkflowError, match=msg):
+        parse_workflow(wf)
+
+
+def test_dispatch_refusals():
+    wf = reviewed()
+    wf["steps"]["plan_escalation"]["dispatch"] = "push"
+    with pytest.raises(WorkflowError, match="plan_escalation"):
+        parse_workflow(wf)
+    wf = reviewed()
+    wf["steps"]["plan_review"]["dispatch"] = "sometimes"
+    with pytest.raises(WorkflowError, match="dispatch"):
+        parse_workflow(wf)

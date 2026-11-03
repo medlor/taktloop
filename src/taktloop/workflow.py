@@ -4,10 +4,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from taktloop.checks import CheckDecl, parse_check, placeholders
+from taktloop.checks import CallDecl, CheckDecl, parse_call, parse_check, placeholders
 
 DONE = "done"  # reserved target name: the task is finished
-KINDS = ("agent", "human_gate")
+KINDS = ("agent", "human_gate", "code")
 REVIEW_KEYS = ("review_of", "on_pass", "on_issues", "max_issue_rounds", "on_escalate")
 
 
@@ -18,7 +18,7 @@ class WorkflowError(ValueError):
 @dataclass(frozen=True)
 class Step:
     name: str
-    kind: Literal["agent", "human_gate"]
+    kind: Literal["agent", "human_gate", "code"]
     role: str
     skill: str | None
     instructions: str
@@ -34,6 +34,9 @@ class Step:
     evidence: tuple[str, ...] = ()
     check: CheckDecl | None = None
     on_fail: str | None = None
+    call: CallDecl | None = None
+    dispatch: Literal["pull", "push"] = "pull"
+    push_identity: str | None = None
 
     @property
     def is_review(self) -> bool:
@@ -75,6 +78,9 @@ def _parse_step(name: str, raw: Any) -> Step:
         raise WorkflowError(
             f"step {name!r}: kind {kind!r} is not supported yet (supported: {', '.join(KINDS)})"
         )
+    if kind == "code":
+        return _parse_code_step(name, raw)
+    dispatch, identity = _parse_push(name, raw, kind)
     skill, artifacts, nxt, approve, reject = None, (), None, None, ()
     extra = _parse_check_fields(name, raw, kind)
     review = {k: raw.get(k) for k in REVIEW_KEYS}
@@ -106,16 +112,52 @@ def _parse_step(name: str, raw: Any) -> Step:
         next=nxt,
         on_approve=approve,
         on_reject=reject,
+        dispatch=dispatch,
+        push_identity=identity,
         **review,
         **extra,
     )
+
+
+def _parse_push(name: str, raw: dict, kind: str) -> tuple[str, str | None]:
+    dispatch, push = raw.get("dispatch", "pull"), raw.get("push") or {}
+    if kind != "agent" and ("dispatch" in raw or "push" in raw):
+        raise WorkflowError(f"step {name!r}: {kind} steps take no dispatch or push")
+    if dispatch not in ("pull", "push"):
+        raise WorkflowError(f"step {name!r}: dispatch must be pull or push, not {dispatch!r}")
+    if dispatch == "pull":
+        return "pull", None
+    push = push if isinstance(push, dict) else {}
+    if push.get("start") != "claude-headless":
+        raise WorkflowError(f"step {name!r}: push.start {push.get('start')!r} is not supported "
+                            "(supported: claude-headless)")
+    if not push.get("identity"):
+        raise WorkflowError(f"step {name!r}: push.identity is required")
+    return "push", str(push["identity"])
+
+
+def _parse_code_step(name: str, raw: dict) -> Step:
+    for key in ("skill", "output", "dispatch", "push", *REVIEW_KEYS):
+        if raw.get(key) is not None:
+            raise WorkflowError(f"step {name!r}: code steps take no {key}")
+    if not raw.get("call") or not raw.get("next"):
+        raise WorkflowError(f"step {name!r}: code steps need call and next")
+    try:
+        call = parse_call(raw["call"])
+    except ValueError as e:
+        raise WorkflowError(f"step {name!r}: {e}") from None
+    extra = _parse_check_fields(name, raw, "code")
+    if extra["evidence"] and set(extra["evidence"]) != set(call.evidence):
+        raise WorkflowError(f"step {name!r}: call.evidence must produce exactly the step's evidence keys")
+    extra["evidence"] = extra["evidence"] or tuple(call.evidence)
+    return Step(name, "code", str(raw["role"]), None, "", (), raw["next"], None, (), call=call, **extra)
 
 
 def _parse_check_fields(name: str, raw: dict, kind: str) -> dict:
     fields = ("check", "evidence", "on_fail")
     if all(raw.get(k) is None for k in fields):
         return {"check": None, "evidence": (), "on_fail": None}
-    if kind != "agent" or any(raw.get(k) is not None for k in REVIEW_KEYS):
+    if kind not in ("agent", "code") or any(raw.get(k) is not None for k in REVIEW_KEYS):
         raise WorkflowError(f"step {name!r}: checks are allowed on agent work steps only")
     if any(not raw.get(k) for k in fields):
         raise WorkflowError(f"step {name!r}: check, evidence and on_fail go together")
@@ -132,13 +174,15 @@ def _parse_check_fields(name: str, raw: dict, kind: str) -> dict:
 def _check_placeholders(steps: Mapping[str, Step]) -> None:
     artifacts = {a for s in steps.values() for a in s.required_artifacts}
     for step in steps.values():
-        for ph in sorted(placeholders(step.check)) if step.check else ():
-            parts = ph.split(".")
-            ok = (parts[0] == "evidence" and ".".join(parts[1:]) in step.evidence) or (
-                len(parts) == 3 and parts[0] == "artifacts" and parts[1] in artifacts
-                and parts[2] in ("commit", "branch", "path"))
-            if not ok:
-                raise WorkflowError(f"step {step.name!r}: unknown placeholder {ph}")
+        for decl in (step.check, step.call):
+            for ph in sorted(placeholders(decl)) if decl else ():
+                parts = ph.split(".")
+                ok = (decl is step.check and parts[0] == "evidence"
+                      and ".".join(parts[1:]) in step.evidence) or (
+                    len(parts) == 3 and parts[0] == "artifacts" and parts[1] in artifacts
+                    and parts[2] in ("commit", "branch", "path"))
+                if not ok:
+                    raise WorkflowError(f"step {step.name!r}: unknown placeholder {ph}")
 
 
 def _check_review(name: str, review: dict, raw: dict) -> None:
