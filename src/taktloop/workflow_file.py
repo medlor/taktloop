@@ -18,6 +18,10 @@ def read(path: Path) -> Workflow:
         raise WorkflowError(f"{path}: {' '.join(str(e).split())}") from e
     if not isinstance(data, dict):
         raise WorkflowError(f"{path}: expected a mapping with start and steps")
+    try:  # only what JSON can hold goes on: snapshots and the sha are JSON
+        data = json.loads(json.dumps(data))
+    except (TypeError, ValueError) as e:
+        raise WorkflowError(f"{path}: {' '.join(str(e).split())}") from e
     version = data.pop("version", 1)
     if type(version) is not int:
         raise WorkflowError(f"{path}: version must be an integer")

@@ -18,7 +18,7 @@ def store():
 
 def test_task_and_step_run_roundtrip(store):
     with store.transaction() as tx:
-        tid = tx.insert_task("T", "do it", "alice", T0)
+        tid = tx.insert_task("T", "do it", "alice", T0, 1)
         sid = tx.insert_step_run(tid, "design", 1, T0)
         task = tx.get_task(tid)
         run = tx.get_step_run(sid)
@@ -40,7 +40,7 @@ def test_task_and_step_run_roundtrip(store):
 def test_update_step_run_fields(store):
     exp = T0 + timedelta(minutes=30)
     with store.transaction() as tx:
-        tid = tx.insert_task("T", "r", "a", T0)
+        tid = tx.insert_task("T", "r", "a", T0, 1)
         sid = tx.insert_step_run(tid, "s", 1, T0)
         tx.update_step_run(sid, status="claimed", claimed_by="bob", claimed_executor="codex",
                            claim_token="tok", lease_expires_at=exp, evidence={"k": [1]},
@@ -62,8 +62,8 @@ def test_update_step_run_fields(store):
 
 def test_tasks_and_artifacts(store):
     with store.transaction() as tx:
-        a = tx.insert_task("A", "r", "x", T0)
-        b = tx.insert_task("B", "r", "x", T0)
+        a = tx.insert_task("A", "r", "x", T0, 1)
+        b = tx.insert_task("B", "r", "x", T0, 1)
         tx.set_task_status(b, "done")
         assert [t.id for t in tx.list_tasks(["active"])] == [a]
         assert [t.id for t in tx.list_tasks(["active", "done"])] == [a, b]
@@ -78,7 +78,7 @@ def test_tasks_and_artifacts(store):
 def test_rollback_on_exception(store):
     with pytest.raises(RuntimeError):
         with store.transaction() as tx:
-            tid = tx.insert_task("T", "r", "a", T0)
+            tid = tx.insert_task("T", "r", "a", T0, 1)
             raise RuntimeError("boom")
     with store.transaction() as tx:
         assert tx.get_task(tid) is None
@@ -88,7 +88,7 @@ def test_persists_across_instances(tmp_path):
     path = tmp_path / "sub" / "f.db"
     s = Store(path)
     with s.transaction() as tx:
-        tid = tx.insert_task("T", "r", "a", T0)
+        tid = tx.insert_task("T", "r", "a", T0, 1)
     s.close()
     s = Store(path)
     with s.transaction() as tx:
@@ -136,7 +136,7 @@ def test_events_ordered_and_detail_json(store):
 def test_concurrent_transactions(tmp_path):
     s = Store(tmp_path / "f.db")
     with s.transaction() as tx:
-        tid = tx.insert_task("T", "r", "a", T0)
+        tid = tx.insert_task("T", "r", "a", T0, 1)
         sid = tx.insert_step_run(tid, "s", 1, T0)
     wins = []
 

@@ -26,8 +26,8 @@ class Service(StepOps, GateOps, OrchestratorOps):
             if route is not None and route not in names:
                 raise Rejected(f"route must be one of: {', '.join(sorted(names)) or 'none defined'}")
             live = self._live(tx)
-            ids.task_id = tx.insert_task(title.strip(), request, caller.label, self._clock(), route,
-                                         live.version)
+            ids.task_id = tx.insert_task(title.strip(), request, caller.label, self._clock(),
+                                         live.version, route)
             ids.step_run_id = self._open_step(tx, ids.task_id, live.start)
             return self._summary(tx, tx.get_task(ids.task_id))
         detail = {"title": title, "request": request, **({"route": route} if route else {})}

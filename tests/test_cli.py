@@ -455,3 +455,14 @@ def test_serve_rewrites_file_version(tmp_path):
     cfg.workflow_path.write_text(yaml.safe_dump(edited, sort_keys=False))
     assert serve.prepare(cfg).live_version == 2
     assert yaml.safe_load(cfg.workflow_path.read_text()) == {"version": 2, **edited}
+
+
+def test_serve_refuses_values_json_cannot_hold(tmp_path, capsys):
+    cfg = write_factory(tmp_path, {"database": str(tmp_path / "f.db"), "auth": AUTH}, ONLY)
+    (tmp_path / "workflow.yaml").write_text(
+        "start: only\nsteps:\n  only:\n    kind: agent\n    role: planner\n    skill: s\n"
+        "    description: 2026-11-03\n    output: {artifacts: [doc]}\n    next: done\n")
+    assert cli.main(["--config", str(cfg), "serve"]) == 2
+    err = capsys.readouterr().err
+    assert err.startswith("taktloop: ") and "workflow.yaml" in err
+    assert err.count("\n") == 1 and "Traceback" not in err

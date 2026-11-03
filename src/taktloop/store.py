@@ -112,7 +112,7 @@ class Tx:
 
     # tasks
     def insert_task(self, title: str, request: str, created_by: str, at: datetime,
-                    route: str | None = None, workflow_version: int = 1) -> int:
+                    workflow_version: int, route: str | None = None) -> int:
         cur = self._c.execute(
             "INSERT INTO tasks (title, request, created_by, created_at, route, workflow_version) VALUES (?,?,?,?,?,?)",
             (title, request, created_by, _encode("created_at", at), route, workflow_version))

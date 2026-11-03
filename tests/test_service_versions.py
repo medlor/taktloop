@@ -60,6 +60,11 @@ def test_task_keeps_its_version(store, clock):
     v2.decide_gate(ME, task.id, "design_approval", "approve")
     assert v2.get_task(ME, task.id).current_step == "plan"
     new = v2.create_task(ME, "u")
+    run = v2.claim_step(ME, new.step_id)
+    v2.complete_step(ME, new.step_id, run.claim_token, "completed",
+                     [ArtifactIn(name="design_doc", path="d.md", commit=SHA, branch="b")])
+    v2.decide_gate(ME, new.id, "design_approval", "approve")
+    assert v2.get_task(ME, new.id).current_step == "planning"
     with store.transaction() as tx:
         assert tx.get_task(new.id).workflow_version == 2
         assert tx.get_task(task.id).workflow_version == 1
