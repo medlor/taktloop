@@ -95,3 +95,12 @@ def test_live_github_run():
         "method": "list_workflow_runs", "owner": "medlor", "repo": "taktloop", "resource_id": "ci.yml",
         "workflow_runs_filter": {"branch": "main"}})
     assert listed["workflow_runs"]["workflow_runs"][0]["head_branch"] == "main"
+
+
+def test_tool_lister_lists_fake_server(fake_github):
+    from taktloop.external import make_tool_lister
+    url, _ = fake_github
+    servers = {"github": ExternalServer("github", url, "TAKTLOOP_GITHUB_TOKEN")}
+    assert {"actions_get", "actions_list"} <= make_tool_lister(servers, {"TAKTLOOP_GITHUB_TOKEN": "t"}, {})("github")
+    with pytest.raises(CheckUnavailable, match="no credential for github"):
+        make_tool_lister(servers, {}, {})("github")

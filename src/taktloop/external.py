@@ -39,10 +39,10 @@ def credential(server: ExternalServer, environ: Mapping[str, str], dotenv: Mappi
     return environ.get(server.token_env) or dotenv.get(server.token_env) or None
 
 
-def make_checker(servers: Mapping[str, ExternalServer], environ: Mapping[str, str],
-                 dotenv: Mapping[str, str], timeout: float = 30.0) -> Checker:
-    async def call(server: ExternalServer, token: str, tool: str, args: dict,
-                   refused: list[int]) -> dict:
+def _remote(servers: Mapping[str, ExternalServer], environ: Mapping[str, str],
+            dotenv: Mapping[str, str], timeout: float) -> Callable[[str, Callable], Any]:
+    """`go(name, action)`: run `await action(client)` against server `name`; failures are CheckUnavailable."""
+    async def call(server: ExternalServer, token: str, action: Callable, refused: list[int]) -> Any:
         async def note(response) -> None:  # the SDK reports an HTTP error status without its code
             if response.status_code >= 400:
                 refused.append(response.status_code)
@@ -51,19 +51,16 @@ def make_checker(servers: Mapping[str, ExternalServer], environ: Mapping[str, st
             async with create_mcp_http_client(headers={"Authorization": f"Bearer {token}"}) as http:
                 http.event_hooks["response"].append(note)
                 async with Client(streamable_http_client(server.url, http_client=http)) as client:
-                    result = await client.call_tool(tool, args)
-        if result.is_error:
-            raise ToolFailed(result.content[0].text if result.content else "unknown error")
-        return read_result(result.structured_content, [c.text for c in result.content])
+                    return await action(client)
 
-    def check(name: str, tool: str, args: dict[str, str]) -> dict:
+    def go(name: str, action: Callable) -> Any:
         server = servers[name]
         token = credential(server, environ, dotenv)
         if token is None:
             raise CheckUnavailable(f"the core has no credential for {name} ({server.token_env} is not set)")
         refused: list[int] = []
         try:
-            return anyio.run(call, server, token, tool, args, refused)
+            return anyio.run(call, server, token, action, refused)
         except CheckUnavailable:
             raise
         except TimeoutError:
@@ -75,4 +72,27 @@ def make_checker(servers: Mapping[str, ExternalServer], environ: Mapping[str, st
                 raise CheckUnavailable(f"{name} answered {refused[0]}") from None
             raise CheckUnavailable(f"{name} is unreachable: {type(e).__name__}") from None
 
+    return go
+
+
+def make_checker(servers: Mapping[str, ExternalServer], environ: Mapping[str, str],
+                 dotenv: Mapping[str, str], timeout: float = 30.0) -> Checker:
+    go = _remote(servers, environ, dotenv, timeout)
+
+    def check(name: str, tool: str, args: dict[str, str]) -> dict:
+        result = go(name, lambda client: client.call_tool(tool, args))
+        if result.is_error:
+            raise ToolFailed(result.content[0].text if result.content else "unknown error")
+        return read_result(result.structured_content, [c.text for c in result.content])
+
     return check
+
+
+def make_tool_lister(servers: Mapping[str, ExternalServer], environ: Mapping[str, str],
+                     dotenv: Mapping[str, str], timeout: float = 30.0) -> Callable[[str], set[str]]:
+    go = _remote(servers, environ, dotenv, timeout)
+
+    async def names(client) -> set[str]:
+        return {t.name for t in (await client.list_tools()).tools}
+
+    return lambda name: go(name, names)

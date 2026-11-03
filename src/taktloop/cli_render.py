@@ -95,6 +95,12 @@ def render_steps(d: dict) -> str:
     )
 
 
+def render_status(d: dict) -> str:
+    return "\n".join([f"factory {d['factory']}, workflow version {d['workflow_version']}",
+                      *(f"  {s}: {p}" for s, p in d["servers"].items()),
+                      *(f"draft problem: {p}" for p in d["draft_problems"] or [])])
+
+
 def render_workflow(d: dict) -> str:
     lines = [f"draft based on version {d['base_version']}" if d["draft"] else f"version {d['version']}"]
     for name, s in d["data"]["steps"].items():

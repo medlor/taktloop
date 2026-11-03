@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from taktloop.availability import Availability
 from taktloop.external import Checker
 from taktloop.models import Artifact, Claim, TaskSummary
 from taktloop.permissions import require
@@ -55,7 +56,9 @@ class ServiceBase:
                  clock: Callable[[], datetime] = _utc_now, separation: str = "off",
                  checker: Checker | None = None, servers: Collection[str] = (),
                  workflow_path: Path | None = None,
-                 tools_check: Callable[[Workflow], str | None] | None = None) -> None:
+                 tools_check: Callable[[Workflow], str | None] | None = None,
+                 availability: Availability | None = None) -> None:
+        self._availability = availability
         self._servers, self._workflow_path, self._tools_check = set(servers), workflow_path, tools_check
         self._store, self._lease, self._clock = store, lease, clock
         self._separation, self._checker = separation, checker
@@ -80,8 +83,10 @@ class ServiceBase:
         self.live_version = workflow.version
         self._versions[workflow.version] = workflow
 
+    live = property(lambda self: self._versions[self.live_version])
+
     def live_data(self) -> dict:
-        return self._versions[self.live_version].data
+        return self.live.data
 
     def _version(self, tx: Tx, version: int) -> Workflow:
         if version not in self._versions:

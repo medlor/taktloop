@@ -65,6 +65,7 @@ def _parser() -> argparse.ArgumentParser:
     rel.add_argument("step_id", type=int)
     rel.add_argument("--force", action="store_true", required=True)
     rel.add_argument("--reason", required=True)
+    sub.add_parser("status", parents=client, help="show the factory, workflow version and server availability")
     sub.add_parser("steps", parents=client, help="list open steps")
     wf = sub.add_parser("workflow", parents=client, help="show and change the workflow").add_subparsers(dest="sub", required=True)
     wf.add_parser("show", parents=client).add_argument("--version", type=int)

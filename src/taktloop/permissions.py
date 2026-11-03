@@ -19,7 +19,7 @@ ROLES = {
     "override_review": "approver",
     "sweep": "orchestrator", "list_events": "orchestrator", "report_stall": "orchestrator",
     "release_step --force": "factory_owner",
-    "get_workflow": ANY, "approve_workflow": "factory_owner",
+    "get_workflow": ANY, "get_factory": ANY, "approve_workflow": "factory_owner",
     **dict.fromkeys(("put_step", "remove_step", "set_start", "discard_draft"),
                     ("factory_assistant", "factory_owner")),
 }  # fmt: skip

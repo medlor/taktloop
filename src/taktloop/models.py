@@ -131,6 +131,13 @@ class OpenStepList(BaseModel):
     steps: list[OpenStep]
 
 
+class FactoryStatus(BaseModel):
+    factory: str
+    workflow_version: int
+    draft_problems: list[str] | None  # None: no draft
+    servers: dict[str, str]  # "ok" or the problem
+
+
 class WorkflowView(BaseModel):
     version: int  # a draft: the version it is based on
     draft: bool

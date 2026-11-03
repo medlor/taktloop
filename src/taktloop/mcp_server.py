@@ -14,6 +14,7 @@ from taktloop.models import (
     ArtifactIn,
     Claim,
     EventFeed,
+    FactoryStatus,
     OpenStepList,
     SweptStepList,
     StepContext,
@@ -175,6 +176,11 @@ def build_server(service: Service, factory: str, verifier: JwtVerifier | None,
     def get_workflow(ctx: Context, version: int | None = None, draft: bool = False) -> WorkflowView:
         """Show the live workflow (or a version, or the draft) as data with its problem list."""
         return service.get_workflow(caller(ctx), version, draft)
+
+    @tool
+    def get_factory(ctx: Context) -> FactoryStatus:
+        """Factory name, live workflow version, draft problems and whether each external server is available."""
+        return service.get_factory(caller(ctx), factory)
 
     @tool
     def put_step(ctx: Context, name: str, definition: dict) -> WorkflowView:

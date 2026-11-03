@@ -11,12 +11,14 @@ from types import FrameType
 import uvicorn
 
 from taktloop.auth import JwtVerifier
+from taktloop.availability import Availability, needed_tools
 from taktloop.config import FactoryConfig
-from taktloop.external import Checker, credential, make_checker, read_dotenv
+from taktloop.external import Checker, credential, make_checker, make_tool_lister, read_dotenv
 from taktloop.mcp_server import build_server
 from taktloop.service import Service
 from taktloop.store import Store
-from taktloop.workflow_file import read as read_workflow, write as write_workflow
+from taktloop.workflow import WorkflowError
+from taktloop.workflow_file import data_sha, read as read_workflow, write as write_workflow
 
 
 class _Server(uvicorn.Server):
@@ -71,9 +73,20 @@ def prepare(cfg: FactoryConfig) -> Service:
     """Build the service from workflow.yaml; rewrite the file if a hand edit became a new version."""
     workflow = read_workflow(cfg.workflow_path)
     cfg.database.parent.mkdir(parents=True, exist_ok=True)
-    service = Service(Store(cfg.database), workflow, timedelta(minutes=cfg.lease_minutes),
+    store = Store(cfg.database)
+    avail = Availability(make_tool_lister(cfg.mcp_servers, os.environ, read_dotenv(cfg.env_file)),
+                         lambda: needed_tools(service.live, ("check",), cfg.sync))
+    tools_check = lambda wf: avail.check(needed_tools(wf, ("check", "call")))  # noqa: E731
+    with store.transaction() as tx:
+        latest = tx.latest_workflow_version()
+    if latest and latest.sha256 != data_sha(workflow.data) and (refusal := tools_check(workflow)):
+        raise WorkflowError(f"{cfg.workflow_path.name}: {refusal}")  # a hand edit that cannot run
+    service = Service(store, workflow, timedelta(minutes=cfg.lease_minutes),
                       separation=cfg.separation, checker=build_checker(cfg),
-                      servers=cfg.mcp_servers.keys(), workflow_path=cfg.workflow_path)
+                      servers=cfg.mcp_servers.keys(), workflow_path=cfg.workflow_path,
+                      tools_check=tools_check, availability=avail)
+    for server, problem in avail.problems().items():
+        logging.getLogger("taktloop").warning("%s %s", server, problem)
     if service.live_version != workflow.version:
         write_workflow(cfg.workflow_path, service.live_data(), service.live_version)
     return service

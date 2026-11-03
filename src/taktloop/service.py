@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from taktloop.availability import describe
 from taktloop.models import Event, Feedback, OpenStep, StepContext, TaskDetail, TaskSummary
 from taktloop.ops_base import Caller, _Ids
 from taktloop.ops_gates import GateOps
@@ -17,6 +18,8 @@ __all__ = ["Caller", "Rejected", "Service"]
 class Service(StepOps, GateOps, OrchestratorOps, WorkflowOps):
     def create_task(self, caller: Caller, title: str, request: str = "",
                     route: str | None = None) -> TaskSummary:
+        if self._availability and (down := self._availability.problems()):
+            raise Rejected(f"factory not available: {describe(down)}")
         def body(tx: Tx, ids: _Ids) -> TaskSummary:
             if not title.strip():
                 raise Rejected("title must not be empty")

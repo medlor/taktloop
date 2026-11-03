@@ -17,7 +17,7 @@ from mcp.client.streamable_http import streamable_http_client
 from mcp.shared._httpx_utils import create_mcp_http_client
 
 from taktloop.cli_render import (
-    render_steps, render_summary, render_task_detail, render_task_list, render_workflow)
+    render_status, render_steps, render_summary, render_task_detail, render_task_list, render_workflow)
 from taktloop.token_client import TokenError, fetch_token
 
 TEMPLATES = Path(__file__).resolve().parents[2] / "templates"
@@ -101,6 +101,8 @@ def _request(ns) -> tuple[str, dict, object]:
         if ns.sub == "list":
             return "list_tasks", {"include_closed": ns.all}, render_task_list
         return "get_task", {"task_id": ns.id}, render_task_detail
+    if ns.cmd == "status":
+        return "get_factory", {}, render_status
     if ns.cmd == "workflow":
         if ns.sub in ("show", "draft"):
             return "get_workflow", {"version": getattr(ns, "version", None), "draft": ns.sub == "draft"}, render_workflow

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import copy
 
-from taktloop.models import WorkflowView
+from taktloop.models import FactoryStatus, WorkflowView
 from taktloop.ops_base import Caller, ServiceBase, _Ids
 from taktloop.rules import Rejected
 from taktloop.store import Tx
@@ -36,6 +36,14 @@ class WorkflowOps(ServiceBase):
                 raise Rejected(f"unknown version {v}")
             return _view(v, dict(self._version(tx, v).data), False)
         return self._run(caller, "get_workflow", {}, body, writes=False)
+
+    def get_factory(self, caller: Caller, factory: str) -> FactoryStatus:
+        def body(tx: Tx, ids: _Ids) -> FactoryStatus:
+            draft, down = tx.get_draft(), self._availability and self._availability.problems()
+            return FactoryStatus(factory=factory, workflow_version=self.live_version,
+                                 draft_problems=_problems(draft.data) if draft else None,
+                                 servers={s: down.get(s, "ok") for s in sorted(self._servers)} if self._availability else {})
+        return self._run(caller, "get_factory", {}, body, writes=False)
 
     def _edit(self, caller: Caller, op: str, detail: dict, change) -> WorkflowView:
         """Apply `change(data)` to the draft (a copy of the live version at the first edit)."""

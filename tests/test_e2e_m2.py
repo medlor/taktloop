@@ -82,7 +82,7 @@ def _answers(url: str) -> bool:
 
 
 @pytest.fixture
-def factory(tmp_path, monkeypatch, request):
+def factory(tmp_path, monkeypatch, request, fake_github):
     """Issuer and core subprocesses; yields (core URL, credentials dir)."""
     issuer = f"http://127.0.0.1:{_free_port()}"
     issuer_cfg = tmp_path / "dev-issuer.yaml"
@@ -98,7 +98,9 @@ def factory(tmp_path, monkeypatch, request):
 
     port = _free_port()
     workflow = (ROOT / "templates/mvp/factory.yaml").read_text()
-    workflow = workflow[workflow.index("mcp_servers:"):]
+    workflow = workflow[workflow.index("mcp_servers:"):].replace(
+        "https://api.githubcopilot.com/mcp/x/actions/readonly", fake_github[0])
+    monkeypatch.setenv("TAKTLOOP_GITHUB_TOKEN", "fake")  # the core checks the server is available
     (tmp_path / "workflow.yaml").write_text((ROOT / "templates/mvp/workflow.yaml").read_text())  # with plan_review
     core_cfg = tmp_path / "factory.yaml"
     core_cfg.write_text(CORE_HEADER.format(port=port, db=tmp_path / "f.db", issuer=issuer) + workflow)
