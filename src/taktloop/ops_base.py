@@ -137,7 +137,8 @@ class ServiceBase:
                 self._wf.step(run.step) if run else None,
                 run.status if run else "open", _holder(run) if run else None,
                 run.lease_expires_at if run else None,
-                self._wf.escalating_review(run.step) if run else None))
+                self._wf.escalating_review(run.step) if run else None,
+                _stall_reason(tx, run) if run else None))
 
     def _open_step(self, tx: Tx, task_id: int, step: str) -> int:
         last = tx.last_step_run(task_id, step)
@@ -162,6 +163,13 @@ class ServiceBase:
         expires = self._clock() + self._lease
         tx.update_step_run(run.id, lease_expires_at=expires)
         return Claim(step_id=run.id, claim_token=run.claim_token, lease_expires_at=expires)
+
+
+def _stall_reason(tx: Tx, run: StepRunRow) -> str | None:
+    """The reason the orchestrator reported this run stalled, if it did."""
+    return next((e.detail["reason"] for e in tx.list_events(run.task_id)
+                 if e.step_run_id == run.id and e.operation == "report_stall"
+                 and e.result == "ok"), None)
 
 
 def _holder(run: StepRunRow) -> str | None:

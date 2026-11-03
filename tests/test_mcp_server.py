@@ -15,7 +15,7 @@ from taktloop.workflow import parse_workflow
 TOOLS = {
     "create_task", "list_tasks", "get_task", "list_open_steps", "claim_step",
     "get_step_context", "heartbeat", "complete_step", "release_step", "decide_gate",
-    "override_review",
+    "override_review", "sweep", "report_stall",
 }  # fmt: skip
 
 pytestmark = pytest.mark.anyio
@@ -129,3 +129,12 @@ async def test_complete_step_passes_evidence_to_the_service(monkeypatch, client_
         await c.call_tool("complete_step", {"step_id": 1, "claim_token": "t", "outcome": "completed",
                                             "evidence": {"ci_run": "12345"}})
     assert seen[0][1:] == (1, "t", "completed", [], None, {"ci_run": "12345"})
+
+
+async def test_sweep_under_orchestrator_role(client_for):
+    async with client_for() as c:
+        await c.call_tool("create_task", {"title": "T"})
+    with as_identity("orchestrator", "orchestrator"):
+        async with client_for() as c:
+            r = await c.call_tool("sweep", {})
+    assert [(s["step"], s["status"]) for s in r.structured_content["steps"]] == [("design", "open")]

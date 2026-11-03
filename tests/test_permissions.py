@@ -101,6 +101,12 @@ def test_override_review_needs_approver():
     require(APPR, "override_review")
 
 
+@pytest.mark.parametrize("op", ["sweep", "report_stall"])
+def test_orchestrator_operations_need_orchestrator(op):
+    assert refused(require, A, op) == f"{op} requires role orchestrator; you have planner"
+    require(who("orchestrator", "orchestrator"), op)
+
+
 def test_list_open_steps_only_shows_steps_of_the_callers_roles(svc):
     svc.create_task(REQ, "T")
     assert svc.list_open_steps(REV) == []

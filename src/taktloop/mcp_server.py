@@ -14,6 +14,7 @@ from taktloop.models import (
     ArtifactIn,
     Claim,
     OpenStepList,
+    SweptStepList,
     StepContext,
     TaskDetail,
     TaskList,
@@ -150,5 +151,15 @@ def build_server(service: Service, factory: str, verifier: JwtVerifier | None,
         """Approver only: approve the latest completed round of the reviewed step regardless
         of review verdicts; the task's current run is closed as superseded."""
         return service.override_review(caller(ctx), task_id, review_step, reason)
+
+    @tool
+    def sweep(ctx: Context) -> SweptStepList:
+        """Orchestrator only: every open or claimed step with its idle time and lease expiries."""
+        return SweptStepList(steps=service.sweep(caller(ctx)))
+
+    @tool
+    def report_stall(ctx: Context, step_id: int, reason: str) -> TaskSummary:
+        """Orchestrator only: flag an open or claimed step as stalled (reported once per run)."""
+        return service.report_stall(caller(ctx), step_id, reason)
 
     return server

@@ -5,6 +5,7 @@ from __future__ import annotations
 from taktloop.models import Event, Feedback, OpenStep, StepContext, TaskDetail, TaskSummary
 from taktloop.ops_base import Caller, _Ids
 from taktloop.ops_gates import GateOps
+from taktloop.ops_orchestrator import OrchestratorOps
 from taktloop.ops_steps import StepOps
 from taktloop.rules import Rejected, latest_rounds
 from taktloop.store import StepRunRow, Tx
@@ -12,7 +13,7 @@ from taktloop.store import StepRunRow, Tx
 __all__ = ["Caller", "Rejected", "Service"]
 
 
-class Service(StepOps, GateOps):
+class Service(StepOps, GateOps, OrchestratorOps):
     def create_task(self, caller: Caller, title: str, request: str = "") -> TaskSummary:
         def body(tx: Tx, ids: _Ids) -> TaskSummary:
             if not title.strip():
@@ -27,10 +28,10 @@ class Service(StepOps, GateOps):
             out = []
             for run in tx.step_runs_with_status(["open"]):
                 step = self._wf.step(run.step)
-                if step.kind == "agent" and step.role in caller.roles:
+                if step.kind in ("agent", "code") and step.role in caller.roles:
                     out.append(OpenStep(step_id=run.id, task_id=run.task_id,
                                         task_title=tx.get_task(run.task_id).title,
-                                        step=run.step, skill=step.skill, round=run.round))
+                                        step=run.step, skill=step.skill or "", round=run.round))
             return out
         return self._run(caller, "list_open_steps", {}, body, writes=False)
 

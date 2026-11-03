@@ -24,7 +24,7 @@ class StepOps(ServiceBase):
                 raise Rejected("step is already claimed")
             if run.status != "open":
                 raise Rejected(f"step is not open (status: {run.status})")
-            if self._wf.step(run.step).kind != "agent":
+            if self._wf.step(run.step).kind not in ("agent", "code"):
                 raise Rejected("step is a human gate and cannot be claimed")
             self._separate(tx, run.task_id, lambda recs: check_claim(
                 self._wf, self._wf.step(run.step), caller.subject, recs))

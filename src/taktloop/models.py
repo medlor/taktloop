@@ -36,6 +36,26 @@ class OpenStep(BaseModel):
     round: int
 
 
+class SweptStep(BaseModel):
+    """An open or claimed step run as the orchestrator sees it."""
+    step_id: int
+    task_id: int
+    step: str
+    kind: str
+    role: str
+    dispatch: str
+    push_identity: str | None
+    status: Literal["open", "claimed"]
+    claimed_by: str | None
+    idle_since: datetime
+    lease_expiries: int
+    stalled: bool
+
+
+class SweptStepList(BaseModel):
+    steps: list[SweptStep]
+
+
 class Claim(BaseModel):
     step_id: int
     claim_token: str

@@ -17,6 +17,7 @@ ROLES = {
     "claim_step": STEP, "heartbeat": STEP, "complete_step": STEP, "release_step": STEP,
     "decide_gate": STEP,
     "override_review": "approver",
+    "sweep": "orchestrator", "report_stall": "orchestrator",
     "release_step --force": "factory_owner",
 }  # fmt: skip
 
