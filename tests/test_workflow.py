@@ -370,16 +370,56 @@ def test_routes_on_agent_step_and_gate():
     assert wf.data["start"] == "triage" and wf.version == 1
 
 
-@pytest.mark.parametrize("raw", [
-    {"kind": "agent", "role": "r", "skill": "s", "routes": {}},
-    {"kind": "agent", "role": "r", "skill": "s", "routes": {"Quick!": "x"}},
-    {"kind": "agent", "role": "r", "skill": "s", "routes": {"q": "x"}, "next": "x"},
-    {"kind": "human_gate", "role": "r", "routes": {"q": "x"}, "on_approve": "x", "on_reject": "x"},
-    {"kind": "human_gate", "role": "r", "routes": {"q": "x"}, "approves": "x"},
+CALL = {"mcp_server": "m", "tool": "t", "evidence": {"k": "id"}}
+
+
+@pytest.mark.parametrize("raw, msg", [
+    ({"kind": "agent", "role": "r", "skill": "s", "routes": {}}, "routes must map"),
+    ({"kind": "agent", "role": "r", "skill": "s", "routes": {"Quick!": "x"}}, "routes must map"),
+    ({"kind": "agent", "role": "r", "skill": "s", "routes": {"q": "x"}, "next": "x"}, "routing steps take no next"),
+    ({"kind": "human_gate", "role": "r", "routes": {"q": "x"}, "on_approve": "x", "on_reject": "x"},
+     "take no on_approve or on_reject"),
+    ({"kind": "human_gate", "role": "r", "routes": {"q": "x"}, "approves": "x"}, "only on gates without routes"),
+    ({"kind": "code", "role": "r", "call": CALL, "next": "done", "routes": {"q": "x"}}, "code steps take no routes"),
+    ({"kind": "code", "role": "r", "call": CALL, "next": "done", "approves": "x"}, "code steps take no approves"),
 ])
-def test_parse_step_refuses_bad_routes(raw):
-    with pytest.raises(WorkflowError):
+def test_parse_step_refuses_bad_routes(raw, msg):
+    with pytest.raises(WorkflowError, match=msg):
         parse_step("s", raw)
+
+
+def _steps(**over):
+    raw = {"w": {"kind": "agent", "role": "r", "skill": "s", "output": {"artifacts": ["x"]}, "next": "c"},
+           "r": {"kind": "agent", "role": "r", "skill": "s", "review_of": "w", "on_pass": "c", "on_issues": "w"},
+           "c": {"kind": "code", "role": "r", "call": CALL, "next": "done"}, **over}
+    return {n: parse_step(n, v) for n, v in raw.items()}
+
+
+@pytest.mark.parametrize("ref, ok", [("evidence.c.k", True), ("evidence.nope.k", False), ("evidence.c.zz", False)])
+def test_call_args_evidence_placeholder(ref, ok):
+    call = {**CALL, "args": {"a": "{{%s}}" % ref}}
+    steps = _steps(d={"kind": "code", "role": "r", "call": call, "next": "done"})
+    assert any("unknown placeholder" in p for p in graph_problems(steps, "w")) is not ok
+
+
+@pytest.mark.parametrize("target", ["r", "c"])
+def test_approves_must_name_agent_work_step_with_artifacts(target):
+    steps = _steps(g={"kind": "human_gate", "role": "r", "on_approve": "done", "on_reject": "w",
+                      "approves": target})
+    assert any("approves" in p for p in graph_problems(steps, "w"))
+
+
+def test_data_is_a_detached_copy_without_version():
+    raw = {"start": "a", "steps": {"a": {"kind": "agent", "role": "r", "skill": "s",
+                                         "output": {"artifacts": ["x"]}, "next": "done"}}}
+    wf = parse_workflow(raw, version=3)
+    assert wf.data == raw and wf.version == 3 and "version" not in wf.data
+    raw["steps"]["a"]["next"] = "changed"
+    assert wf.data["steps"]["a"]["next"] == "done"
+
+
+def test_unhashable_start_is_a_problem():
+    assert graph_problems(_steps(), ["w"])[0].startswith("start")
 
 
 def test_graph_problems_are_listed_not_raised():

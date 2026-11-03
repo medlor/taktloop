@@ -1,5 +1,6 @@
 """Parse and validate the ``workflow:`` block of factory.yaml. Pure, no I/O."""
 
+import copy
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -140,13 +141,11 @@ def parse_step(name: str, raw: Any) -> Step:
 
 def _parse_routes(name: str, raw: dict, kind: str) -> tuple[dict[str, str], str | None]:
     routes, approves = raw.get("routes"), raw.get("approves")
-    if kind == "code" and (routes is not None or approves is not None):
-        raise WorkflowError(f"step {name!r}: code steps take no routes or approves")
     if approves is not None and (kind != "human_gate" or routes is not None or not isinstance(approves, str)):
         raise WorkflowError(f"step {name!r}: approves is a step name, only on gates without routes")
     if routes is None:
         return {}, approves
-    if (not isinstance(routes, dict) or not routes or kind == "code"
+    if (not isinstance(routes, dict) or not routes
             or not all(isinstance(k, str) and ROUTE_NAME.fullmatch(k) and isinstance(v, str)
                        for k, v in routes.items())):
         raise WorkflowError(f"step {name!r}: routes must map names like 'quick' to step names")
@@ -171,7 +170,7 @@ def _parse_push(name: str, raw: dict, kind: str) -> tuple[str, str | None]:
 
 
 def _parse_code_step(name: str, raw: dict) -> Step:
-    for key in ("skill", "output", "instructions", "dispatch", "push", *REVIEW_KEYS):
+    for key in ("skill", "output", "instructions", "dispatch", "push", "routes", "approves", *REVIEW_KEYS):
         if raw.get(key) is not None:
             raise WorkflowError(f"step {name!r}: code steps take no {key}")
     if not raw.get("call") or not raw.get("next"):
@@ -251,7 +250,7 @@ def graph_problems(steps: Mapping[str, Step], start: str | None) -> list[str]:
                                 "work step with artifacts")
         problems += [f"step {step.name!r} points to unknown step {t!r}"
                      for t in step.targets if t not in (DONE, CANCELLED, step.review_of) and t not in steps]
-    if start not in steps:
+    if not isinstance(start, str) or start not in steps:
         return sorted([*problems, f"start step {start!r} does not exist"])
     seen, todo = set(), [start]
     while todo:
@@ -272,4 +271,4 @@ def parse_workflow(data: dict, version: int = 1) -> Workflow:
     start = data.get("start")
     if problems := graph_problems(steps, start):
         raise WorkflowError("; ".join(problems))
-    return Workflow(start, steps, version, {"start": start, "steps": raw_steps})
+    return Workflow(start, steps, version, copy.deepcopy({"start": start, "steps": raw_steps}))
