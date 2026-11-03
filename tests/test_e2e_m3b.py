@@ -60,6 +60,7 @@ def factory(tmp_path, monkeypatch, request, fake_github):
     shipped = (ROOT / "templates/mvp/factory.yaml").read_text()
     assert GITHUB_URL in shipped
     workflow = shipped[shipped.index("mcp_servers:"):].replace(GITHUB_URL, github_url)
+    (tmp_path / "workflow.yaml").write_text((ROOT / "templates/mvp/workflow.yaml").read_text())
     core_cfg = tmp_path / "factory.yaml"
     core_cfg.write_text(CORE_HEADER.format(port=port, db=tmp_path / "f.db", issuer=issuer) + workflow)
     url = f"http://127.0.0.1:{port}/mcp"

@@ -3,8 +3,11 @@ from pathlib import Path
 
 import pytest
 
+from conftest import write_factory
 from taktloop import cli, cli_commands
 
+ONLY = {"start": "only", "steps": {"only": {"kind": "agent", "role": "planner", "skill": "s",
+                                            "output": {"artifacts": ["doc"]}, "next": "done"}}}
 SHA = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
 
 DETAIL = {
@@ -183,8 +186,7 @@ def _spy(monkeypatch):
 
 def test_token_resolution_order(monkeypatch, tmp_path, capsys):
     seen = _spy(monkeypatch)
-    cfg = tmp_path / "factory.yaml"
-    cfg.write_text("workflow:\n  start: only\n  steps:\n    only: {kind: agent, role: planner, skill: s, output: {artifacts: [doc]}, next: done}\ncli: {identity: from-config}\nauth: {issuer: http://127.0.0.1:8766, audience: taktloop}\n")
+    cfg = write_factory(tmp_path, {"cli": {"identity": "from-config"}, "auth": {"issuer": "http://127.0.0.1:8766", "audience": "taktloop"}}, ONLY)
     monkeypatch.delenv("TAKTLOOP_TOKEN")
     assert cli.main(["--config", str(cfg), "steps"]) == 0 and seen["token"] == "fetched-from-config"
     assert cli.main(["--config", str(cfg), "steps", "--as", "me"]) == 0 and seen["token"] == "fetched-me"
@@ -242,8 +244,7 @@ def test_serve_on_an_m1_database_says_delete_it(tmp_path, capsys):
     raw = sqlite3.connect(db)
     raw.execute("PRAGMA user_version = 1")
     raw.close()
-    cfg = tmp_path / "factory.yaml"
-    cfg.write_text(f"database: {db}\nworkflow:\n  start: only\n  steps:\n    only: {{kind: agent, role: planner, skill: s, output: {{artifacts: [doc]}}, next: done}}\nauth: {{issuer: http://127.0.0.1:8766, audience: taktloop}}\n")
+    cfg = write_factory(tmp_path, {"database": str(db), "auth": {"issuer": "http://127.0.0.1:8766", "audience": "taktloop"}}, ONLY)
     assert cli.main(["--config", str(cfg), "serve"]) == 2
     err = capsys.readouterr().err
     assert err.startswith("taktloop: ") and f"delete {db} to start fresh" in err
@@ -368,8 +369,7 @@ def test_credentials_resolve_next_to_the_config(monkeypatch, tmp_path):
     monkeypatch.setattr(cli_commands, "fetch_token", lambda identity, d: dirs.append(d) or "t")
     proj = tmp_path / "proj"
     proj.mkdir()
-    cfg = proj / "factory.yaml"
-    cfg.write_text("workflow:\n  start: only\n  steps:\n    only: {kind: agent, role: planner, skill: s, output: {artifacts: [doc]}, next: done}\ncli: {identity: me}\nauth: {issuer: http://127.0.0.1:8766, audience: taktloop}\n")
+    cfg = write_factory(proj, {"cli": {"identity": "me"}, "auth": {"issuer": "http://127.0.0.1:8766", "audience": "taktloop"}}, ONLY)
     monkeypatch.delenv("TAKTLOOP_TOKEN")
     monkeypatch.chdir(tmp_path)
     assert cli.main(["--config", str(cfg), "steps"]) == 0 and seen["token"] == "t"
@@ -426,7 +426,6 @@ def test_serve_warns_once_per_server_without_a_credential(monkeypatch, caplog):
 
 
 def test_orchestrator_needs_block(tmp_path, capsys):
-    cfg = tmp_path / "factory.yaml"
-    cfg.write_text("workflow:\n  start: only\n  steps:\n    only: {kind: agent, role: planner, skill: s, output: {artifacts: [doc]}, next: done}\nauth: {issuer: http://127.0.0.1:8766, audience: taktloop}\n")
+    cfg = write_factory(tmp_path, {"auth": {"issuer": "http://127.0.0.1:8766", "audience": "taktloop"}}, ONLY)
     assert cli.main(["orchestrator", "--config", str(cfg)]) == 2
     assert capsys.readouterr().err == "taktloop: factory.yaml has no orchestrator block\n"

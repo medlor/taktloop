@@ -7,8 +7,10 @@ from typing import Literal
 
 import yaml
 
+from taktloop import workflow_file
+from taktloop.checks import CheckDecl, parse_check
 from taktloop.external import ExternalServer
-from taktloop.workflow import Workflow, WorkflowError, parse_workflow
+from taktloop.workflow import Workflow, WorkflowError
 
 
 @dataclass(frozen=True)
@@ -18,6 +20,12 @@ class OrchestratorConfig:
     code_retry_seconds: int = 60
     stall_after_minutes: int = 60
     max_lease_expiries: int = 2
+
+
+@dataclass(frozen=True)
+class SyncConfig:
+    check: CheckDecl
+    every_minutes: int = 5
 
 
 @dataclass(frozen=True)
@@ -37,6 +45,10 @@ class FactoryConfig:
     env_file: Path = Path(".env")
     orchestrator: OrchestratorConfig | None = None
     root: Path = Path(".")  # the directory of factory.yaml
+    workflow_path: Path = Path("workflow.yaml")
+    product_checkout: Path = Path(".")
+    hooks_path: Path = Path("hooks.yaml")
+    sync: Mapping[str, SyncConfig] = field(default_factory=dict)
 
     @property
     def url(self) -> str:
@@ -46,8 +58,10 @@ class FactoryConfig:
 def load_config(path: Path) -> FactoryConfig:
     path = Path(path)
     data = yaml.safe_load(path.read_text()) or {}
-    if not isinstance(data, dict) or "workflow" not in data:
-        raise WorkflowError(f"{path}: missing 'workflow' block")
+    if not isinstance(data, dict):
+        raise WorkflowError(f"{path}: expected a mapping")
+    if "workflow" in data:
+        raise WorkflowError("factory.yaml: move the workflow block to workflow.yaml (see docs/user/workflow-reference.md)")
     server = data.get("server") or {}
     auth = data.get("auth")
     if not isinstance(auth, dict) or not auth.get("issuer") or not auth.get("audience"):
@@ -61,11 +75,23 @@ def load_config(path: Path) -> FactoryConfig:
         if not isinstance(raw, dict) or not raw.get("url") or not raw.get("token_env"):
             raise WorkflowError(f"{path.name}: mcp_servers.{name} needs url and token_env")
         servers[str(name)] = ExternalServer(str(name), str(raw["url"]), str(raw["token_env"]))
-    workflow = parse_workflow(data["workflow"])
+    workflow_path = path.parent / data.get("workflow_file", "workflow.yaml")
+    workflow = workflow_file.read(workflow_path)
     for step_name, step in workflow.steps.items():
         for what, decl in (("check", step.check), ("call", step.call)):
             if decl and decl.mcp_server not in servers:
                 raise WorkflowError(f"step {step_name!r}: {what} uses unknown mcp_server {decl.mcp_server!r}")
+    sync = {}
+    for name, raw in (data.get("sync") or {}).items():
+        raw = dict(raw)
+        every = int(raw.pop("every_minutes", 5))
+        try:
+            check = parse_check(raw)
+        except ValueError as e:
+            raise WorkflowError(f"{path.name}: sync.{name}: {e}") from e
+        if check.mcp_server not in servers:
+            raise WorkflowError(f"{path.name}: sync.{name}: unknown mcp_server {check.mcp_server!r}")
+        sync[str(name)] = SyncConfig(check, every)
     orch = data.get("orchestrator")
     if orch is not None:
         if not isinstance(orch, dict) or not orch.get("identity"):
@@ -88,4 +114,8 @@ def load_config(path: Path) -> FactoryConfig:
         env_file=path.parent / ".env",
         orchestrator=orch,
         root=path.parent,
+        workflow_path=workflow_path,
+        product_checkout=path.parent / (data.get("product") or {}).get("checkout", "."),
+        hooks_path=path.parent / "hooks.yaml",
+        sync=sync,
     )

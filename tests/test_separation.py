@@ -129,7 +129,7 @@ def test_off_allows_one_identity_to_do_everything(off):
 
 def test_superseded_run_is_not_a_completion(store, clock):
     """A plan round cut short by an override was never completed: its claimer may still approve."""
-    raw = yaml.safe_load((ROOT / "factory.yaml").read_text())["workflow"]
+    raw = yaml.safe_load((ROOT / "workflow.yaml").read_text())
     raw["steps"]["plan_review"]["on_pass"] = "release"
     raw["steps"]["release"] = {"kind": "human_gate", "role": "approver", "on_approve": "done",
                                "on_reject": "plan"}

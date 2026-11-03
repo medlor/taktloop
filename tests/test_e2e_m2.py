@@ -98,7 +98,8 @@ def factory(tmp_path, monkeypatch, request):
 
     port = _free_port()
     workflow = (ROOT / "templates/mvp/factory.yaml").read_text()
-    workflow = workflow[workflow.index("mcp_servers:"):]  # the shipped workflow, with plan_review
+    workflow = workflow[workflow.index("mcp_servers:"):]
+    (tmp_path / "workflow.yaml").write_text((ROOT / "templates/mvp/workflow.yaml").read_text())  # with plan_review
     core_cfg = tmp_path / "factory.yaml"
     core_cfg.write_text(CORE_HEADER.format(port=port, db=tmp_path / "f.db", issuer=issuer) + workflow)
     url = f"http://127.0.0.1:{port}/mcp"

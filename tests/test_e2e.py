@@ -29,30 +29,33 @@ factory: taktloop  # matches the real_issuer scopes
 server: {{host: 127.0.0.1, port: {port}}}
 database: {db}
 auth: {{issuer: {issuer}, audience: taktloop}}
-workflow:
-  start: design
-  steps:
-    design:
-      kind: agent
-      role: planner
-      skill: brainstorming
-      instructions: Write the design doc.
-      output:
-        artifacts: [design_doc]
-      next: design_approval
-    design_approval:
-      kind: human_gate
-      role: approver
-      on_approve: plan
-      on_reject: design
-    plan:
-      kind: agent
-      role: planner
-      skill: writing-plans
-      instructions: Write the plan.
-      output:
-        artifacts: [plan]
-      next: done
+"""
+
+
+WORKFLOW = """\
+start: design
+steps:
+  design:
+    kind: agent
+    role: planner
+    skill: brainstorming
+    instructions: Write the design doc.
+    output:
+      artifacts: [design_doc]
+    next: design_approval
+  design_approval:
+    kind: human_gate
+    role: approver
+    on_approve: plan
+    on_reject: design
+  plan:
+    kind: agent
+    role: planner
+    skill: writing-plans
+    instructions: Write the plan.
+    output:
+      artifacts: [plan]
+    next: done
 """
 
 
@@ -64,6 +67,7 @@ class Core:
         self.url = f"http://127.0.0.1:{port}/mcp"
         self.dir = tmp_path
         self.cfg = str(tmp_path / "factory.yaml")
+        (tmp_path / "workflow.yaml").write_text(WORKFLOW)
         (tmp_path / "factory.yaml").write_text(CONFIG.format(port=port, db=tmp_path / "f.db", issuer=issuer))
         self.token = token
         self.proc: subprocess.Popen | None = None

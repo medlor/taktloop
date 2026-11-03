@@ -3,6 +3,7 @@ import threading
 import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 import uvicorn
@@ -17,6 +18,14 @@ from taktloop.issuer.state import init_state
 from taktloop.service import Caller, Service
 from taktloop.store import Store
 from taktloop.workflow import parse_workflow
+
+
+def write_factory(tmp_path, factory: dict, workflow: dict) -> Path:
+    """Write factory.yaml and workflow.yaml into tmp_path; return the factory.yaml path."""
+    (tmp_path / "workflow.yaml").write_text(yaml.safe_dump(workflow, sort_keys=False))
+    path = tmp_path / "factory.yaml"
+    path.write_text(yaml.safe_dump(factory, sort_keys=False))
+    return path
 
 
 ALL_ROLES = ("requester", "planner", "reviewer", "approver", "factory_owner")
