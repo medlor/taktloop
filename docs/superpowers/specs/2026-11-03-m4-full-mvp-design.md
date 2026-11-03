@@ -1,6 +1,6 @@
 # taktloop M4: the full MVP — tickets, hooks, triage, live workflow changes, setup
 
-Status: draft · Nov 3, 2026 · @Tobias
+Status: approved · Nov 3, 2026 · @Tobias
 
 > Calls marked **[builder call]** were made while writing this design, not agreed with @Tobias. Check them while reading.
 
@@ -52,7 +52,7 @@ M4 is **one milestone** (decided with @Tobias, no split). As before it is a prot
 - The core acting on the outside world: the core still only reads (gate checks, sync checks, availability); everything that writes (tickets, hooks, headless runs) is the orchestrator's.
 - A live workflow that could strand a running task.
 - A setup that assumes the factory directory and the taktloop source checkout are the same directory (it would block the later central service).
-- Exceeding the budget: **≤ 3,850 non-test lines** under `src/` in total (cap raised by @Tobias, MVP-wide), counted as before (`wc -l` over every `.py` file under `src/`). `src/` is at 2,898, so M4 has **~950 lines**. The ticket stand-in counts. No new runtime dependency.
+- Exceeding the budget: **≤ 4,300 non-test lines** under `src/` in total (cap raised by @Tobias, MVP-wide), counted as before (`wc -l` over every `.py` file under `src/`). `src/` is at 2,898, so M4 has **~1,400 lines** (~950 estimated, so ~450 headroom). The ticket stand-in counts. No new runtime dependency.
 
 ## 3. Approaches considered
 
@@ -338,9 +338,9 @@ New identity `assistant` with `factory_assistant` in the template's `dev-issuer.
 | Availability check, `get_factory`, `status` | `external.py`, `serve.py`, `orchestrator.py`, CLI | 60 |
 | HTTP API | `mcp_server.py` or new `http_api.py` | 70 |
 | `init`, `connect`, `up`, `workflow` and `route` commands | `cli.py`, `cli_commands.py` (split if over ~300) | 75 |
-| **Total** | | **~950** of ~950 |
+| **Total** | | **~950** of ~1,400 |
 
-No headroom: the plan must carry a line allowance per task and a running count, and the HTTP API comes last so it can be squeezed. **If the count heads over the cap, stop and ask @Tobias** what to cut; nothing is dropped silently **[builder call]**. No module over ~300 lines.
+The headroom is for the estimates being wrong, not for new scope: the plan must carry a line allowance per task and a running count, and the HTTP API comes last so it can be squeezed. **If the count heads over the cap, stop and ask @Tobias** what to cut; nothing is dropped silently **[builder call]**. No module over ~300 lines.
 
 ## 14. M4 acceptance (the demo)
 
@@ -362,7 +362,7 @@ No headroom: the plan must carry a line allowance per task and a running count, 
 
 ## 15. Docs to update
 
-- **PRD §5**: the MVP budget is ~3,850 lines (raised by @Tobias); the runtime row: the core is one process with one SQLite file, the stand-ins (issuer, tickets) and the orchestrator are separate processes.
+- **PRD §5**: the MVP budget is ~4,300 lines (raised by @Tobias); the runtime row: the core is one process with one SQLite file, the stand-ins (issuer, tickets) and the orchestrator are separate processes.
 - **ADR 0002**: the ticket stand-in is its own process; the core's out-of-sync check; the availability check is implemented.
 - **ADR 0004**: hooks are fired by the orchestrator from the core's events.
 - **mvp-workflow.md**: triage routes and park as built; the small-change route goes to plan.
