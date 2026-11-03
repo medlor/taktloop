@@ -83,6 +83,8 @@ class StepContext(BaseModel):
     feedback: Feedback | None
     artifacts: list[Artifact]
     review_of: str | None = None  # set on review steps: the step whose work is reviewed
+    description: str = ""
+    values: dict[str, str] = {}  # task.* and evidence.<step>.<key>, for {{...}} in hooks and checks
 
 
 class Event(BaseModel):
@@ -97,8 +99,25 @@ class Event(BaseModel):
     detail: dict
 
 
+class FeedEvent(BaseModel):
+    id: int
+    at: datetime
+    subject: str
+    operation: str
+    task_id: int | None
+    step: str | None
+    detail: dict
+    values: dict[str, str]
+
+
+class EventFeed(BaseModel):
+    events: list[FeedEvent]
+    newest_id: int
+
+
 class TaskDetail(TaskSummary):
     request: str
+    description: str = ""  # of the current step
     artifacts: list[Artifact]
     history: list[Event]
 

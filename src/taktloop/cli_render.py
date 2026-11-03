@@ -23,6 +23,12 @@ def _event_detail(e: dict) -> str:
         return ": ".join(x for x in (d.get("decision"), d.get("reason")) if x)
     if e["operation"] == "escalate":
         return f"{d['review_step']} failed {d['issue_rounds']} times → {d['gate']}"
+    if e["operation"] == "step_opened":
+        return f"round {d['round']}"
+    if e["operation"] == "task_closed":
+        return d["status"]
+    if e["operation"] == "route_at_intake":
+        return f"{d['route']} by {d['by']}"
     if e["operation"] == "report_stall":
         return f"stalled: {d['reason']}"
     if e["operation"] == "override_review":
@@ -31,6 +37,8 @@ def _event_detail(e: dict) -> str:
         return f"{d.get('reason', '')}{' (force)' if d.get('force') else ''}"
     if e["operation"] == "check":
         return f"{d['result']}: {d['summary']}"
+    if e["operation"] == "complete_step" and d.get("route"):
+        return f"route {d['route']} → {d['next']}: {d['findings']}"
     if e["operation"] == "complete_step" and d.get("outcome") in ("pass", "issues", "failed"):
         return f"{d['outcome']} → {d.get('next', '?')}"
     if e["operation"] == "complete_step":
@@ -51,7 +59,9 @@ def render_task_detail(d: dict) -> str:
     lines = [f"#{d['id']} {d['title']} [{d['status']}]"]
     if d["step_id"] is not None:
         lines.append(f"step: {d['current_step']}  (step id {d['step_id']})")
-    lines += [f"waiting for: {d['waiting_for']}", "", "artifacts:"]
+    lines.append(f"waiting for: {d['waiting_for']}")
+    lines += [f"  {d['description']}"] if d.get("description") else []
+    lines += ["", "artifacts:"]
     arts = [(a["name"], f"{a['path']}@{a['commit'][:12]}", a["branch"], f"{a['step']} r{a['round']}")
             for a in d["artifacts"]]
     lines += ["  " + ln for ln in _table(arts)] if arts else ["  none"]

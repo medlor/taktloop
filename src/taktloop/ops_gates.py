@@ -14,9 +14,10 @@ from taktloop.store import Tx
 
 class GateOps(ServiceBase):
     def decide_gate(self, caller: Caller, task_id: int, gate: str | None,
-                    decision: Literal["approve", "reject"],
+                    decision: Literal["approve", "reject", "route"],
                     reason: str | None = None, target: str | None = None) -> TaskSummary:
-        """On reject, `target` must be one of the gate's on_reject steps (default: the first)."""
+        """On reject, `target` must be one of the gate's on_reject steps (default: the first).
+        A gate with routes takes only `route`: `target` is a route name, `reason` required."""
         names: dict = {"task_id": task_id, "gate": gate, "decision": decision,
                        "reason": reason, "target": target, "artifacts": []}
 
@@ -38,7 +39,16 @@ class GateOps(ServiceBase):
             approved = approved_step(self._wf, step, None)
             self._separate(tx, task_id,
                            lambda recs: check_approval(approved, caller.subject, recs))
-            if decision == "approve":
+            if step.routes or decision == "route":
+                if decision != "route" or not step.routes:
+                    raise Rejected(f"gate {step.name} takes decision 'route' (one of: "
+                                   f"{', '.join(step.routes)})" if step.routes else
+                                   f"gate {step.name} has no routes")
+                names["reason"] = clean_reason(reason)
+                dest, outcome = step.routes.get(target or ""), target
+                if dest is None:
+                    raise Rejected(f"route must be one of: {', '.join(step.routes)}")
+            elif decision == "approve":
                 dest, outcome = step.on_approve, "approved"
             elif decision == "reject":
                 names["reason"] = clean_reason(reason)
@@ -48,7 +58,7 @@ class GateOps(ServiceBase):
                                    f"{', '.join(step.on_reject)}; not {dest}")
                 names["target"] = dest
             else:
-                raise Rejected(f"decision must be 'approve' or 'reject', got {decision!r}")
+                raise Rejected(f"decision must be 'approve', 'reject' or 'route', got {decision!r}")
             names["artifacts"] = [a.model_dump() for a in
                                   latest_rounds(self._artifacts(tx, task_id))]
             tx.update_step_run(run.id, status="completed", outcome=outcome,

@@ -15,7 +15,7 @@ from taktloop.workflow import parse_workflow
 TOOLS = {
     "create_task", "list_tasks", "get_task", "list_open_steps", "claim_step",
     "get_step_context", "heartbeat", "complete_step", "release_step", "decide_gate",
-    "override_review", "sweep", "report_stall",
+    "override_review", "sweep", "report_stall", "list_events",
 }  # fmt: skip
 
 pytestmark = pytest.mark.anyio

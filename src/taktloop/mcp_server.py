@@ -13,6 +13,7 @@ from taktloop.auth import JwtVerifier, roles_from_scopes
 from taktloop.models import (
     ArtifactIn,
     Claim,
+    EventFeed,
     OpenStepList,
     SweptStepList,
     StepContext,
@@ -70,9 +71,10 @@ def build_server(service: Service, factory: str, verifier: JwtVerifier | None,
         return server.tool()(_mapped(fn))
 
     @tool
-    def create_task(ctx: Context, title: str, request: str = "") -> TaskSummary:
-        """Create a task; its first step opens immediately."""
-        return service.create_task(caller(ctx), title, request)
+    def create_task(ctx: Context, title: str, request: str = "", route: str | None = None) -> TaskSummary:
+        """Create a task; its first step opens immediately. `route` (approver only) names a
+        route of a routed agent step, which is then taken at once instead of triaged."""
+        return service.create_task(caller(ctx), title, request, route)
 
     @tool
     def list_tasks(ctx: Context, include_closed: bool = False) -> TaskList:
@@ -136,13 +138,14 @@ def build_server(service: Service, factory: str, verifier: JwtVerifier | None,
     def decide_gate(
         ctx: Context,
         task_id: int,
-        decision: Literal["approve", "reject"],
+        decision: Literal["approve", "reject", "route"],
         gate: str | None = None,
         reason: str | None = None,
         target: str | None = None,
     ) -> TaskSummary:
         """Approve or reject the human gate a task is waiting at; a reject goes back to
-        `target` (one of the gate's on_reject steps, default the first)."""
+        `target` (one of the gate's on_reject steps, default the first). A gate with routes
+        takes only decision 'route': `target` is the route name, `reason` is required."""
         return service.decide_gate(caller(ctx), task_id, gate, decision, reason, target)
 
     @tool
@@ -156,6 +159,11 @@ def build_server(service: Service, factory: str, verifier: JwtVerifier | None,
     def sweep(ctx: Context) -> SweptStepList:
         """Orchestrator only: every open or claimed step with its idle time and lease expiries."""
         return SweptStepList(steps=service.sweep(caller(ctx)))
+
+    @tool
+    def list_events(ctx: Context, after_id: int, limit: int = 100) -> EventFeed:
+        """Orchestrator only: successful events with id above after_id, oldest first."""
+        return service.list_events(caller(ctx), after_id, limit)
 
     @tool
     def report_stall(ctx: Context, step_id: int, reason: str) -> TaskSummary:

@@ -89,8 +89,8 @@ def test_full_flow_reaches_done(svc):
     assert d.status == "done" and len(d.artifacts) == 2 and d.request == "do it"
     assert [(a.step, a.round) for a in d.artifacts] == [("design", 1), ("plan", 1)]
     assert [e.operation for e in d.history if e.result == "ok"] == [
-        "create_task", "claim_step", "complete_step", "decide_gate", "claim_step",
-        "complete_step"]
+        "step_opened", "create_task", "claim_step", "step_opened", "complete_step",
+        "step_opened", "decide_gate", "claim_step", "task_closed", "complete_step"]
     assert d.history[0].step == "design"
 
 

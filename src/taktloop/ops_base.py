@@ -13,7 +13,7 @@ from taktloop.permissions import require
 from taktloop.rules import Rejected, same_token, waiting_for
 from taktloop.separation import Record
 from taktloop.store import StepRunRow, Store, TaskRow, Tx
-from taktloop.workflow import DONE, Workflow
+from taktloop.workflow import CANCELLED, DONE, Workflow
 
 
 @dataclass(frozen=True)
@@ -127,13 +127,13 @@ class ServiceBase:
 
     def _summary(self, tx: Tx, task: TaskRow) -> TaskSummary:
         run = None
-        if task.status != "done":
+        if task.status == "active":
             run = tx.current_step_run(task.id)
             run = self._expire(tx, run) if run else None
         return TaskSummary(
             id=task.id, title=task.title, status=task.status,
             current_step=run.step if run else None, step_id=run.id if run else None,
-            waiting_for=waiting_for(
+            waiting_for="cancelled" if task.status == "cancelled" else waiting_for(
                 self._wf.step(run.step) if run else None,
                 run.status if run else "open", _holder(run) if run else None,
                 run.lease_expires_at if run else None,
@@ -141,15 +141,38 @@ class ServiceBase:
                 _stall_reason(tx, run) if run else None))
 
     def _open_step(self, tx: Tx, task_id: int, step: str) -> int:
+        """Open a run of `step`, recording step_opened. A routed agent step in round 1 of a task
+        created with a route is completed at once, the creator's route standing in for triage."""
         last = tx.last_step_run(task_id, step)
-        return tx.insert_step_run(task_id, step, (last.round if last else 0) + 1, self._clock())
+        rnd = (last.round if last else 0) + 1
+        run_id = tx.insert_step_run(task_id, step, rnd, self._clock())
+        self._event(tx, CORE, "step_opened", _Ids(task_id, run_id), {"step": step, "round": rnd})
+        task, s = tx.get_task(task_id), self._wf.step(step)
+        if rnd == 1 and s.kind == "agent" and task.route in s.routes:
+            by = task.created_by
+            tx.update_step_run(run_id, status="completed", claimed_by=by, outcome=task.route,
+                               evidence={"findings": f"route set at intake by {by}"},
+                               closed_at=self._clock())
+            self._event(tx, CORE, "route_at_intake", _Ids(task_id, run_id),
+                        {"step": step, "route": task.route, "by": by})
+            self._advance(tx, task_id, s.routes[task.route])
+        return run_id
 
     def _advance(self, tx: Tx, task_id: int, target: str) -> int | None:
-        """Open `target` as the task's next run (its id), or finish the task."""
-        if target == DONE:
-            tx.set_task_status(task_id, "done")
+        """Open `target` as the task's next run (its id), or finish or cancel the task."""
+        if target in (DONE, CANCELLED):
+            tx.set_task_status(task_id, target)
+            self._event(tx, CORE, "task_closed", _Ids(task_id), {"status": target})
             return None
         return self._open_step(tx, task_id, target)
+
+    def _values(self, tx: Tx, task_id: int) -> dict[str, str]:
+        """task.* and evidence.<step>.<key> (latest completed run of each step) for substitution."""
+        task = tx.get_task(task_id)
+        out = {"task.id": str(task.id), "task.title": task.title, "task.request": task.request}
+        latest = {r.step: r for r in tx.list_step_runs(task_id) if r.status == "completed" and r.evidence}
+        return out | {f"evidence.{r.step}.{k}": str(v) for r in latest.values()
+                      for k, v in r.evidence.items()}
 
     def _artifacts(self, tx: Tx, task_id: int) -> list[Artifact]:
         out = []

@@ -66,7 +66,9 @@ class StepOps(ServiceBase):
         def body(tx: Tx, ids: _Ids) -> TaskSummary:
             run = self._load_owned(tx, ids, caller, "complete_step", step_id, claim_token)
             step = self._wf.step(run.step)
-            if step.is_review:
+            if step.routes:
+                _check_route(step, outcome, artifacts, detail["findings"])
+            elif step.is_review:
                 _check_verdict(outcome, artifacts, detail["findings"])
             elif outcome != "completed":
                 raise Rejected(f"outcome must be 'completed', got {outcome!r}")
@@ -79,7 +81,9 @@ class StepOps(ServiceBase):
             stored = {**evidence, **({"findings": f} if (f := detail["findings"]) else {})}
             tx.update_step_run(run.id, status="completed", evidence=stored or None,
                                outcome="failed" if found[1] else outcome, closed_at=self._clock())
-            if outcome == "issues":
+            if step.routes:
+                target, detail["route"] = step.routes[outcome], outcome
+            elif outcome == "issues":
                 target = self._after_issues(tx, run.task_id, step)
             else:
                 target = step.on_pass if outcome == "pass" else step.next
@@ -163,6 +167,15 @@ def _check_evidence(keys: tuple[str, ...], evidence: dict[str, str]) -> None:
                                              for v in evidence.values()):
         raise Rejected(f"evidence must be exactly: {', '.join(keys)}" if keys
                        else "this step takes no evidence")
+
+
+def _check_route(step: Step, outcome: str, artifacts: list[ArtifactIn], findings: str | None) -> None:
+    if outcome not in step.routes:
+        raise Rejected(f"outcome must be one of: {', '.join(step.routes)}")
+    if artifacts:
+        raise Rejected("routed steps take no artifacts")
+    if not findings:
+        raise Rejected("findings (the reason for the route) are required")
 
 
 def _check_verdict(outcome: str, artifacts: list[ArtifactIn], findings: str | None) -> None:

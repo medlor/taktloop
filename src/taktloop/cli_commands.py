@@ -96,7 +96,7 @@ def _request(ns) -> tuple[str, dict, object]:
     if ns.cmd == "task":
         if ns.sub == "create":
             text = sys.stdin.read() if ns.request == "-" else ns.request
-            return "create_task", {"title": ns.title, "request": text}, render_summary
+            return "create_task", {"title": ns.title, "request": text, "route": ns.route}, render_summary
         if ns.sub == "list":
             return "list_tasks", {"include_closed": ns.all}, render_task_list
         return "get_task", {"task_id": ns.id}, render_task_detail
@@ -104,6 +104,9 @@ def _request(ns) -> tuple[str, dict, object]:
         args = {"task_id": ns.task, "decision": ns.cmd, "gate": ns.gate}
         if ns.cmd == "reject":
             args["reason"], args["target"] = ns.reason, ns.to
+        return "decide_gate", args, render_summary
+    if ns.cmd == "route":
+        args = {"task_id": ns.task, "decision": "route", "target": ns.name, "reason": ns.reason}
         return "decide_gate", args, render_summary
     if ns.cmd == "override":
         args = {"task_id": ns.task, "reason": ns.reason, "review_step": ns.step}

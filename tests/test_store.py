@@ -114,7 +114,7 @@ def test_schema_v1_file_is_refused_with_delete_hint(tmp_path):
     raw.close()
     with pytest.raises(SchemaMismatch) as e:
         Store(path)
-    assert str(e.value) == (f"{path} has schema version 1, expected 2; delete {path} to start "
+    assert str(e.value) == (f"{path} has schema version 1, expected 3; delete {path} to start "
                             "fresh (M1 data is not migrated)")
 
 

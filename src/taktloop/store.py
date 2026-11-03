@@ -13,14 +13,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _SCHEMA = """
 CREATE TABLE tasks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     title TEXT NOT NULL, request TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'active',
-    created_by TEXT NOT NULL, created_at TEXT NOT NULL
+    created_by TEXT NOT NULL, created_at TEXT NOT NULL, route TEXT
 );
 CREATE TABLE step_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -61,6 +61,7 @@ class TaskRow:
     status: str
     created_by: str
     created_at: datetime
+    route: str | None
 
 
 @dataclass(frozen=True)
@@ -151,10 +152,11 @@ class Tx:
         return [_row(cls, r) for r in self._c.execute(sql, args).fetchall()]
 
     # tasks
-    def insert_task(self, title: str, request: str, created_by: str, at: datetime) -> int:
+    def insert_task(self, title: str, request: str, created_by: str, at: datetime,
+                    route: str | None = None) -> int:
         cur = self._c.execute(
-            "INSERT INTO tasks (title, request, created_by, created_at) VALUES (?,?,?,?)",
-            (title, request, created_by, _encode("created_at", at)))
+            "INSERT INTO tasks (title, request, created_by, created_at, route) VALUES (?,?,?,?,?)",
+            (title, request, created_by, _encode("created_at", at), route))
         return cur.lastrowid
 
     def get_task(self, id: int) -> TaskRow | None:
@@ -233,6 +235,10 @@ class Tx:
             (_encode("at", at), subject, _encode("roles", roles), executor, operation, task_id,
              step_run_id, _encode("detail", detail), result, reason))
         return cur.lastrowid
+
+    def events_after(self, after_id: int, limit: int) -> list[EventRow]:
+        return self._all(EventRow, "SELECT * FROM events WHERE id>? AND result='ok' "
+                         "ORDER BY id LIMIT ?", (after_id, limit))
 
     def list_events(self, task_id: int) -> list[EventRow]:
         return self._all(EventRow, "SELECT * FROM events WHERE task_id=? ORDER BY id", (task_id,))

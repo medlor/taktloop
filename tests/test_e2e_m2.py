@@ -202,8 +202,8 @@ def test_m2_demo(factory, capsys):
     assert [a["commit"][0] for a in task["artifacts"] if a["name"] == "plan"][-1] == "c"
     history = task["history"]
     for e in history:  # every identity's call carries its roles; the core's own events have none
-        assert e["subject"] and (e["roles"] or (e["subject"], e["operation"]) == ("core", "escalate")), e
-    assert history[0]["operation"] == "create_task" and history[0]["subject"] == "tobias"
+        assert e["subject"] and (e["roles"] or e["subject"] == "core"), e
+    assert history[1]["operation"] == "create_task" and history[1]["subject"] == "tobias"
 
     agent_roles = ["planner", "reviewer"]
     tobias_roles = ["approver", "factory_owner", "requester", "reviewer"]

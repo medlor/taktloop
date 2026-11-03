@@ -14,14 +14,22 @@ __all__ = ["Caller", "Rejected", "Service"]
 
 
 class Service(StepOps, GateOps, OrchestratorOps):
-    def create_task(self, caller: Caller, title: str, request: str = "") -> TaskSummary:
+    def create_task(self, caller: Caller, title: str, request: str = "",
+                    route: str | None = None) -> TaskSummary:
         def body(tx: Tx, ids: _Ids) -> TaskSummary:
             if not title.strip():
                 raise Rejected("title must not be empty")
-            ids.task_id = tx.insert_task(title.strip(), request, caller.label, self._clock())
+            names = {n for s in self._wf.steps.values() if s.kind == "agent" for n in s.routes}
+            if route is not None and "approver" not in caller.roles:
+                raise Rejected(f"--route requires role approver; you have "
+                               f"{', '.join(sorted(caller.roles)) or 'none'}")
+            if route is not None and route not in names:
+                raise Rejected(f"route must be one of: {', '.join(sorted(names)) or 'none defined'}")
+            ids.task_id = tx.insert_task(title.strip(), request, caller.label, self._clock(), route)
             ids.step_run_id = self._open_step(tx, ids.task_id, self._wf.start)
             return self._summary(tx, tx.get_task(ids.task_id))
-        return self._run(caller, "create_task", {"title": title, "request": request}, body)
+        detail = {"title": title, "request": request, **({"route": route} if route else {})}
+        return self._run(caller, "create_task", detail, body)
 
     def list_open_steps(self, caller: Caller) -> list[OpenStep]:
         def body(tx: Tx, ids: _Ids) -> list[OpenStep]:
@@ -44,6 +52,7 @@ class Service(StepOps, GateOps, OrchestratorOps):
                 step=run.step, skill=step.skill or "", instructions=step.instructions,
                 required_artifacts=list(step.required_artifacts), round=run.round,
                 feedback=_feedback(tx, run), review_of=step.review_of,
+                description=step.description, values=self._values(tx, task.id),
                 artifacts=latest_rounds(self._artifacts(tx, task.id), exclude_step=run.step if run.round == 1 else None))
         return self._run(caller, "get_step_context", {"step_id": step_id}, body, writes=False)
 
@@ -63,7 +72,9 @@ class Service(StepOps, GateOps, OrchestratorOps):
                                      executor=e.executor, operation=e.operation,
                                      step=steps[e.step_run_id], result=e.result,
                                      reason=e.reason, detail=e.detail))
+            step = self._wf.step(summary.current_step) if summary.current_step else None
             return TaskDetail(**summary.model_dump(), request=task.request,
+                              description=step.description if step else "",
                               artifacts=self._artifacts(tx, task_id), history=history)
         return self._run(caller, "get_task", {"task_id": task_id}, body, writes=False)
 
