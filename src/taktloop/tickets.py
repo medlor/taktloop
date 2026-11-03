@@ -13,6 +13,7 @@ from mcp.server.auth.settings import AuthSettings
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
+Doc = dict[str, Any]
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS tickets(id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL,
   body TEXT NOT NULL, status TEXT NOT NULL, closed INTEGER NOT NULL, created_at TEXT NOT NULL,
@@ -36,63 +37,62 @@ class TicketStore:
         row = self._conn.execute("SELECT * FROM tickets WHERE id=?", (id,)).fetchone()
         if row is None:
             raise KeyError(id)
-        comments = self._conn.execute(
-            "SELECT text, at FROM comments WHERE ticket_id=? ORDER BY rowid", (id,)).fetchall()
+        comments = self._conn.execute("SELECT text, at FROM comments WHERE ticket_id=? ORDER BY rowid", (id,))
         return {"id": row["id"], "title": row["title"], "body": row["body"], "status": row["status"],
                 "closed": bool(row["closed"]), "comments": [dict(c) for c in comments]}
 
-    def _set(self, id: int, status: str, closed: bool) -> dict:
-        self._ticket(id)
-        self._conn.execute("UPDATE tickets SET status=?, closed=?, updated_at=? WHERE id=?",
-                           (status, closed, _now(), id))
-        return self._ticket(id)
+    def _edit(self, id: int, *statements: tuple[str, tuple]) -> dict:
+        """Run the statements on an existing ticket and return it (KeyError if there is none)."""
+        with self._lock:
+            self._ticket(id)
+            for sql, params in statements:
+                self._conn.execute(sql, params)
+            return self._ticket(id)
+
+    def _set(self, id: int, status: str, closed: bool, note: str = "") -> dict:
+        now = _now()
+        note_sql = (("INSERT INTO comments VALUES(?,?,?)", (id, note, now)),) if note else ()
+        return self._edit(id, *note_sql, ("UPDATE tickets SET status=?, closed=?, updated_at=? WHERE id=?",
+                                          (status, closed, now, id)))
 
     def create(self, title: str, body: str = "") -> dict:
+        now = _now()
         with self._lock:
-            now = _now()
-            cur = self._conn.execute(
-                "INSERT INTO tickets(title, body, status, closed, created_at, updated_at) "
-                "VALUES(?,?,'open',0,?,?)", (title, body, now, now))
+            cur = self._conn.execute("INSERT INTO tickets(title, body, status, closed, created_at, updated_at) "
+                                     "VALUES(?,?,'open',0,?,?)", (title, body, now, now))
             return self._ticket(cur.lastrowid)
 
     def get(self, id: int) -> dict:
-        with self._lock:
-            return self._ticket(id)
+        return self._edit(id)
 
     def list(self, include_closed: bool = False) -> list[dict]:
         with self._lock:
-            ids = self._conn.execute("SELECT id FROM tickets WHERE closed=0 OR ? ORDER BY id",
-                                     (include_closed,)).fetchall()
-            return [self._ticket(r["id"]) for r in ids]
+            ids = self._conn.execute("SELECT id FROM tickets WHERE closed=0 OR ? ORDER BY id", (include_closed,))
+            return [self._ticket(r["id"]) for r in ids.fetchall()]
 
     def update_status(self, id: int, status: str) -> dict:
-        with self._lock:
-            if self._ticket(id)["closed"]:
-                raise ValueError(f"ticket {id} is closed")
-            return self._set(id, status, False)
+        if status == "closed":
+            raise ValueError("use close_ticket to close a ticket")
+        if self.get(id)["closed"]:
+            raise ValueError(f"ticket {id} is closed")
+        return self._set(id, status, False)
 
     def comment(self, id: int, text: str) -> dict:
-        with self._lock:
-            self._ticket(id)
-            self._conn.execute("INSERT INTO comments VALUES(?,?,?)", (id, text, _now()))
-            return self._ticket(id)
+        return self._edit(id, ("INSERT INTO comments VALUES(?,?,?)", (id, text, _now())))
 
     def close(self, id: int, resolution: str = "") -> dict:
-        with self._lock:
-            self._ticket(id)
-            if resolution:
-                self._conn.execute("INSERT INTO comments VALUES(?,?,?)", (id, resolution, _now()))
-            return self._set(id, "closed", True)
+        return self._set(id, "closed", True, resolution)
 
     def reopen(self, id: int) -> dict:
-        with self._lock:
-            return self._set(id, "open", False)
+        if not self.get(id)["closed"]:
+            raise ValueError(f"ticket {id} is not closed")
+        return self._set(id, "open", False)
 
     def delete(self, id: int) -> dict:
         with self._lock:
-            self._ticket(id)
             self._conn.execute("DELETE FROM comments WHERE ticket_id=?", (id,))
-            self._conn.execute("DELETE FROM tickets WHERE id=?", (id,))
+            if self._conn.execute("DELETE FROM tickets WHERE id=?", (id,)).rowcount == 0:
+                raise KeyError(id)
             return {"deleted": id}
 
 
@@ -108,19 +108,6 @@ class StaticTokenVerifier:
         return AccessToken(token="static", client_id="tickets", scopes=[])
 
 
-def _mapped(fn):
-    @wraps(fn)
-    def wrapper(*args, **kwargs):
-        try:
-            return fn(*args, **kwargs)
-        except KeyError as e:
-            raise ToolError(f"unknown ticket {e.args[0]}") from e
-        except ValueError as e:
-            raise ToolError(str(e)) from e
-
-    return wrapper
-
-
 def build_tickets_server(store: TicketStore, token: str | None, url: str) -> MCPServer:
     """`token=None` disables authentication (tests only)."""
     verifier = StaticTokenVerifier(token) if token else None
@@ -128,45 +115,54 @@ def build_tickets_server(store: TicketStore, token: str | None, url: str) -> MCP
     server = MCPServer("taktloop-tickets", token_verifier=verifier, auth=auth)
 
     def tool(fn):
-        return server.tool()(_mapped(fn))
+        @wraps(fn)
+        def wrapper(*args, **kwargs):
+            try:
+                return fn(*args, **kwargs)
+            except KeyError as e:
+                raise ToolError(f"unknown ticket {e.args[0]}") from e
+            except ValueError as e:
+                raise ToolError(str(e)) from e
+
+        return server.tool()(wrapper)
 
     @tool
-    def create_ticket(title: str, body: str = "") -> dict[str, Any]:
+    def create_ticket(title: str, body: str = "") -> Doc:
         """Create a ticket (status "open")."""
         return store.create(title, body)
 
     @tool
-    def get_ticket(id: int) -> dict[str, Any]:
+    def get_ticket(id: int) -> Doc:
         """Show a ticket with its comments."""
         return store.get(id)
 
     @tool
-    def list_tickets(include_closed: bool = False) -> dict[str, Any]:
+    def list_tickets(include_closed: bool = False) -> Doc:
         """List tickets, open ones by default."""
         return {"tickets": store.list(include_closed)}
 
     @tool
-    def update_status(id: int, status: str) -> dict[str, Any]:
+    def update_status(id: int, status: str) -> Doc:
         """Set the free-text status of an open ticket."""
         return store.update_status(id, status)
 
     @tool
-    def comment(id: int, text: str) -> dict[str, Any]:
+    def comment(id: int, text: str) -> Doc:
         """Add a comment to a ticket."""
         return store.comment(id, text)
 
     @tool
-    def close_ticket(id: int, resolution: str = "") -> dict[str, Any]:
+    def close_ticket(id: int, resolution: str = "") -> Doc:
         """Close a ticket; a resolution is recorded as a comment."""
         return store.close(id, resolution)
 
     @tool
-    def reopen_ticket(id: int) -> dict[str, Any]:
+    def reopen_ticket(id: int) -> Doc:
         """Reopen a closed ticket (status "open")."""
         return store.reopen(id)
 
     @tool
-    def delete_ticket(id: int) -> dict[str, Any]:
+    def delete_ticket(id: int) -> Doc:
         """Delete a ticket and its comments."""
         return store.delete(id)
 
@@ -174,14 +170,8 @@ def build_tickets_server(store: TicketStore, token: str | None, url: str) -> MCP
 
 
 def run(store: TicketStore, token: str, port: int) -> None:
-    import uvicorn
-
-    from taktloop.serve import _Server
+    from taktloop.serve import serve_app
 
     url = f"http://127.0.0.1:{port}/mcp"
-    app = build_tickets_server(store, token, url).streamable_http_app(host="127.0.0.1")
     print(f"taktloop ticket stand-in on {url}", flush=True)
-    try:
-        _Server(uvicorn.Config(app, host="127.0.0.1", port=port, timeout_graceful_shutdown=3)).run()
-    except KeyboardInterrupt:
-        pass
+    serve_app(build_tickets_server(store, token, url).streamable_http_app(host="127.0.0.1"), "127.0.0.1", port)

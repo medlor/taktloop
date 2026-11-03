@@ -74,16 +74,20 @@ def run(cfg: FactoryConfig) -> None:
     service = Service(Store(cfg.database), cfg.workflow, timedelta(minutes=cfg.lease_minutes),
                       separation=cfg.separation, checker=build_checker(cfg))
     verifier = JwtVerifier(cfg.auth_issuer, cfg.auth_audience)
-    app = _log_unauthenticated(
-        build_server(service, cfg.factory, verifier, cfg.url).streamable_http_app(host=cfg.host))
+    app = build_server(service, cfg.factory, verifier, cfg.url).streamable_http_app(host=cfg.host)
+    print(f"taktloop core for factory '{cfg.factory}' on {cfg.url}", flush=True)
+    serve_app(app, cfg.host, cfg.port)
+
+
+def serve_app(app, host: str, port: int) -> None:
+    """Run an MCP ASGI app until Ctrl-C: 401s logged, graceful shutdown bounded."""
+    app = _log_unauthenticated(app)
     # Not MCPServer.run(): it sets no graceful-shutdown timeout, and on Python >= 3.12
     # shutdown then waits forever for a client that keeps a request open (Claude
     # Code does). After the timeout, uvicorn cancels those requests.
-    server = _Server(uvicorn.Config(app, host=cfg.host, port=cfg.port,
-                                    timeout_graceful_shutdown=3))
+    server = _Server(uvicorn.Config(app, host=host, port=port, timeout_graceful_shutdown=3))
     # The cancelled requests are expected on shutdown, not errors worth a traceback.
     logging.getLogger("uvicorn.error").addFilter(lambda r: not _cancelled(r))
-    print(f"taktloop core for factory '{cfg.factory}' on {cfg.url}", flush=True)
     try:
         server.run()
     except KeyboardInterrupt:  # uvicorn re-raises the Ctrl-C after its clean shutdown

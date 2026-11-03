@@ -6,7 +6,6 @@ import re
 import shutil
 import socket
 import sys
-from functools import partial
 from importlib.metadata import version
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -18,8 +17,6 @@ from mcp.client.streamable_http import streamable_http_client
 from mcp.shared._httpx_utils import create_mcp_http_client
 
 from taktloop.cli_render import render_steps, render_summary, render_task_detail, render_task_list
-from taktloop.config import load_config
-from taktloop.external import read_dotenv
 from taktloop.token_client import TokenError, fetch_token
 
 TEMPLATES = Path(__file__).resolve().parents[2] / "templates"
@@ -158,53 +155,6 @@ def _orchestrator(ns, cfg) -> int:
     from taktloop import orchestrator  # the loop; client commands never load it
     orchestrator.run(cfg)
     return 0
-
-
-def _tickets(ns) -> int:
-    """`taktloop tickets serve` runs the stand-in; the other subcommands are its MCP client."""
-    try:
-        if ns.sub == "serve":
-            from taktloop import tickets  # the server stack; client commands never load it
-
-            token = _tickets_token("TAKTLOOP_TICKETS_TOKEN", Path(".env"))
-            ns.database.parent.mkdir(parents=True, exist_ok=True)
-            tickets.run(tickets.TicketStore(ns.database), token, ns.port)
-            return 0
-        server = load_config(ns.config).mcp_servers.get("tickets")
-        if server is None:
-            raise ValueError(f"{ns.config.name} has no mcp_servers.tickets")
-        if ns.sub == "list":
-            tool, args = "list_tickets", {"include_closed": ns.all}
-        else:
-            tool, args = f"{ns.sub}_ticket" if ns.sub != "show" else "get_ticket", {"id": ns.id}
-            if ns.sub == "close":
-                args["resolution"] = ns.resolution
-        token = _tickets_token(server.token_env, ns.config.parent / ".env")
-        result = anyio.run(partial(_call_tool, server.url, tool, args, token, client="taktloop-tickets-cli"))
-    except ToolRejected as e:
-        print(f"rejected: {e}", file=sys.stderr)
-        return 1
-    except CoreUnreachable:
-        print(f"ticket stand-in not reachable at {server.url} — start it with `uv run taktloop tickets serve`",
-              file=sys.stderr)
-        return 2
-    except TokenRejected:
-        print("taktloop: the stand-in refused the token (401)", file=sys.stderr)
-        return 2
-    except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError) as e:
-        print(f"taktloop: {e}", file=sys.stderr)
-        return 2
-    if ns.sub == "list" and not ns.json:
-        print("\n".join(f"#{t['id']} [{t['status']}] {t['title']}" for t in result["tickets"]) or "no tickets")
-    else:
-        print(json.dumps(result, indent=2))
-    return 0
-
-
-def _tickets_token(name: str, dotenv: Path) -> str:
-    if token := os.environ.get(name) or read_dotenv(dotenv).get(name):
-        return token
-    raise ValueError(f"{name} is not set: put it in the environment or in {dotenv}")
 
 
 def _install_skill(dest: Path) -> int:

@@ -48,3 +48,43 @@ def test_server_tools_in_memory(tmp_path):
             assert refused.is_error
 
     anyio.run(scenario)
+
+
+def test_status_invariants(tmp_path):
+    s = TicketStore(tmp_path / "t.db")
+    s.create("A")
+    with pytest.raises(ValueError):
+        s.update_status(1, "closed")
+    with pytest.raises(ValueError):
+        s.reopen(1)
+    assert s.update_status(1, "in design")["status"] == "in design"
+    with pytest.raises(KeyError):
+        s.delete(9)
+    with pytest.raises(KeyError):
+        s.close(9)
+
+
+def test_bearer_auth_on_http(tmp_path):
+    from starlette.testclient import TestClient
+
+    app = build_tickets_server(TicketStore(tmp_path / "t.db"), "tok", "http://t/mcp").streamable_http_app(host="t")
+    init = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+        "protocolVersion": "2025-03-26", "capabilities": {}, "clientInfo": {"name": "t", "version": "0"}}}
+    hdr = {"Accept": "application/json, text/event-stream", "Content-Type": "application/json"}
+    with TestClient(app, base_url="http://t") as c:
+        assert c.post("/mcp", json=init, headers=hdr).status_code == 401
+        assert c.post("/mcp", json=init, headers={**hdr, "Authorization": "Bearer bad"}).status_code == 401
+        assert c.post("/mcp", json=init, headers={**hdr, "Authorization": "Bearer tok"}).status_code == 200
+
+
+def test_tickets_token_lookup(tmp_path, monkeypatch):
+    from taktloop.cli_tickets import _tickets_token
+
+    env = tmp_path / ".env"
+    monkeypatch.delenv("TK_X", raising=False)
+    with pytest.raises(ValueError):
+        _tickets_token("TK_X", env)
+    env.write_text("TK_X=from-file\n")
+    assert _tickets_token("TK_X", env) == "from-file"
+    monkeypatch.setenv("TK_X", "from-env")
+    assert _tickets_token("TK_X", env) == "from-env"

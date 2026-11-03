@@ -7,8 +7,8 @@ from pathlib import Path
 
 import yaml
 
-from taktloop.cli_commands import (
-    _install_skill, _issuer, _orchestrator, _serve, _tickets, _token, run_client)
+from taktloop.cli_commands import _install_skill, _issuer, _orchestrator, _serve, _token, run_client
+from taktloop.cli_tickets import _tickets
 from taktloop.config import load_config
 
 
