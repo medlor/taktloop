@@ -423,3 +423,10 @@ def test_serve_warns_once_per_server_without_a_credential(monkeypatch, caplog):
     assert [r.getMessage() for r in caplog.records] == [
         "no credential for github: set TAKTLOOP_GITHUB_TOKEN in the environment or in .env; "
         "checks against it will be refused"]
+
+
+def test_orchestrator_needs_block(tmp_path, capsys):
+    cfg = tmp_path / "factory.yaml"
+    cfg.write_text("workflow:\n  start: only\n  steps:\n    only: {kind: agent, role: planner, skill: s, output: {artifacts: [doc]}, next: done}\nauth: {issuer: http://127.0.0.1:8766, audience: taktloop}\n")
+    assert cli.main(["orchestrator", "--config", str(cfg)]) == 2
+    assert capsys.readouterr().err == "taktloop: factory.yaml has no orchestrator block\n"

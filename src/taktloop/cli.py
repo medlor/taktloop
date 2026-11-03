@@ -7,7 +7,7 @@ from pathlib import Path
 
 import yaml
 
-from taktloop.cli_commands import _install_skill, _issuer, _serve, _token, run_client
+from taktloop.cli_commands import _install_skill, _issuer, _orchestrator, _serve, _token, run_client
 from taktloop.config import load_config
 
 
@@ -31,6 +31,7 @@ def _parser() -> argparse.ArgumentParser:
     ident.add_argument("--as", dest="identity", metavar="IDENTITY", help="fetch a token for this identity")
     client = [shared, ident]
     sub.add_parser("serve", parents=[shared], help="run the core")
+    sub.add_parser("orchestrator", parents=[shared], help="run the orchestrator (code steps, pushes, stalls)")
     task = sub.add_parser("task", parents=client, help="create, list and show tasks").add_subparsers(dest="sub", required=True)
     c = task.add_parser("create", parents=client)
     c.add_argument("title")
@@ -83,10 +84,12 @@ def main(argv: list[str] | None = None) -> int:
     if ns.cmd == "token":
         return _token(ns)
     try:
-        cfg = None if (ns.url and ns.cmd != "serve") else load_config(ns.config)
+        cfg = None if (ns.url and ns.cmd not in ("serve", "orchestrator")) else load_config(ns.config)
     except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError) as e:
         print(f"taktloop: {e}", file=sys.stderr)
         return 2
     if ns.cmd == "serve":
         return _serve(cfg)
+    if ns.cmd == "orchestrator":
+        return _orchestrator(ns, cfg)
     return run_client(ns, cfg)

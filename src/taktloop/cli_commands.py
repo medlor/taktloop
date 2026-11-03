@@ -66,9 +66,9 @@ def _reason(text: str) -> str:
     return _TOOL_PREFIX.sub("", text, count=1)
 
 
-async def _call_tool(url: str, name: str, args: dict, token: str) -> dict:
+async def _call_tool(url: str, name: str, args: dict, token: str, client: str = "taktloop-cli") -> dict:
     _probe(url)
-    info = Implementation(name="taktloop-cli", version=version("taktloop"))
+    info = Implementation(name=client, version=version("taktloop"))
     http = create_mcp_http_client(headers={"Authorization": f"Bearer {token}"})
     unauthorized = []
 
@@ -82,7 +82,7 @@ async def _call_tool(url: str, name: str, args: dict, token: str) -> dict:
             result = await client.call_tool(name, args)
     except BaseException as e:
         if unauthorized:
-            raise TokenRejected from None
+            raise TokenRejected("the core answered 401") from None
         if _only_os_errors(e):
             raise CoreUnreachable(url) from None
         raise
@@ -145,6 +145,15 @@ def _serve(cfg) -> int:
     except SchemaMismatch as e:  # an M1 database: tell the user to delete it, no traceback
         print(f"taktloop: {e}", file=sys.stderr)
         return 2
+    return 0
+
+
+def _orchestrator(ns, cfg) -> int:
+    if cfg.orchestrator is None:
+        print(f"taktloop: {ns.config.name} has no orchestrator block", file=sys.stderr)
+        return 2
+    from taktloop import orchestrator  # the loop; client commands never load it
+    orchestrator.run(cfg)
     return 0
 
 
