@@ -304,6 +304,7 @@ def test_code_step_loads():
 
 @pytest.mark.parametrize("changes", [
     {"skill": "s"},
+    {"instructions": "Do it."},
     {"output": {"artifacts": ["x"]}},
     {"next": None},
     {"call": None},

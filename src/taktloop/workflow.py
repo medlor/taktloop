@@ -137,7 +137,7 @@ def _parse_push(name: str, raw: dict, kind: str) -> tuple[str, str | None]:
 
 
 def _parse_code_step(name: str, raw: dict) -> Step:
-    for key in ("skill", "output", "dispatch", "push", *REVIEW_KEYS):
+    for key in ("skill", "output", "instructions", "dispatch", "push", *REVIEW_KEYS):
         if raw.get(key) is not None:
             raise WorkflowError(f"step {name!r}: code steps take no {key}")
     if not raw.get("call") or not raw.get("next"):
