@@ -15,7 +15,8 @@ ORCH = Caller("orchestrator", frozenset({"orchestrator"}))
 WORKFLOW = {"start": "triage", "steps": {
     "triage": {"kind": "agent", "role": "triage", "skill": "s", "instructions": "i",
                "description": "Pick a route", "routes": {"quick": "build", "park": "decide"}},
-    "decide": {"kind": "human_gate", "role": "approver", "routes": {"cancel": "cancelled"}},
+    "decide": {"kind": "human_gate", "role": "approver",
+               "routes": {"cancel": "cancelled", "again": "triage"}},
     "build": {"kind": "agent", "role": "builder", "skill": "s", "instructions": "i",
               "output": {"artifacts": ["change"]}, "next": "done"},
 }}
@@ -152,3 +153,54 @@ def test_create_with_route_refusals(svc):
 def test_route_at_intake_only_in_round_one(svc):
     t = svc.create_task(APPROVER_REQ, "T", route="park")
     assert t.current_step == "decide"
+    s = svc.decide_gate(APPROVER_REQ, t.id, None, "route", reason="again", target="again")
+    assert (s.current_step, svc.get_step_context(TRIAGE, s.step_id).round) == ("triage", 2)
+    assert "claimed_by" not in s.waiting_for and "waiting for a triage" in s.waiting_for
+
+
+def test_intake_run_is_claimed_by_the_subject(svc, store):
+    t = svc.create_task(Caller("boss", APPROVER_REQ.roles, "cli"), "T", route="quick")
+    with store.transaction() as tx:
+        run = tx.list_step_runs(t.id)[0]
+    assert (run.claimed_by, run.claimed_executor, run.outcome) == ("boss", None, "quick")
+
+
+def test_values_drop_evidence_of_a_later_run_without_any(store, clock):
+    wf = {"start": "build", "steps": {
+        "build": {"kind": "agent", "role": "builder", "skill": "s", "instructions": "i",
+                  "output": {"artifacts": ["change"]}, "next": "rev"},
+        "rev": {"kind": "agent", "role": "reviewer", "skill": "s", "instructions": "i",
+                "review_of": "build", "on_pass": "done", "on_issues": "build"}}}
+    svc = Service(store, parse_workflow(wf), clock=clock)
+    rev = Caller("r", frozenset({"reviewer", "builder"}))
+    t = svc.create_task(REQ, "T")
+    for outcome, findings in (("completed", None), ("issues", "X"), ("completed", None),
+                              ("pass", None)):
+        sid = svc.get_task(REQ, t.id).step_id
+        c = svc.claim_step(rev, sid)
+        svc.complete_step(rev, sid, c.claim_token, outcome, CHANGE if outcome == "completed" else [],
+                          findings=findings)
+        if outcome == "issues":
+            assert svc.get_step_context(rev, svc.get_task(REQ, t.id).step_id).values[
+                "evidence.rev.findings"] == "X"
+    assert "evidence.rev.findings" not in svc.get_step_context(rev, sid).values
+
+
+def test_list_events_limit_is_clamped(svc):
+    svc.create_task(REQ, "T")
+    assert len(svc.list_events(ORCH, after_id=0, limit=-1).events) == 1
+    assert len(svc.list_events(ORCH, after_id=0, limit=0).events) == 1
+
+
+def test_check_args_may_use_task_values(store, clock):
+    wf = {"start": "v", "steps": {"v": {
+        "kind": "agent", "role": "builder", "skill": "s", "instructions": "i", "evidence": ["r"],
+        "check": {"mcp_server": "g", "tool": "t", "args": {"q": "{{task.title}}"},
+                  "expect": {"ok": "yes"}}, "next": "done", "on_fail": "v"}}}
+    seen = []
+    svc = Service(store, parse_workflow(wf), clock=clock,
+                  checker=lambda server, tool, args: seen.append(args) or {"ok": "yes"})
+    t = svc.create_task(REQ, "Title")
+    c = svc.claim_step(BUILDER, t.step_id)
+    svc.complete_step(BUILDER, t.step_id, c.claim_token, "completed", [], evidence={"r": "1"})
+    assert seen == [{"q": "Title"}]

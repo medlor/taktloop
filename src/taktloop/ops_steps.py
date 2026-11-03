@@ -59,7 +59,7 @@ class StepOps(ServiceBase):
                 raise Rejected("this step takes no artifacts")
             arts = {a.name: a for a in latest_rounds(self._artifacts(tx, run.task_id))}
             try:  # the check's arguments and wanted values
-                return run.task_id, resolve(step.check, evidence, arts)
+                return run.task_id, resolve(step.check, evidence, arts, self._values(tx, run.task_id))
             except CheckUnavailable as e:
                 raise Rejected(f"CI check could not run: {e}") from None
 

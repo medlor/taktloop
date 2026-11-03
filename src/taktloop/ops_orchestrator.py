@@ -30,11 +30,13 @@ class OrchestratorOps(ServiceBase):
     def list_events(self, caller: Caller, after_id: int, limit: int = 100) -> EventFeed:
         """Successful events after `after_id`, oldest first, with the task's template values."""
         def body(tx: Tx, ids: _Ids) -> EventFeed:
+            cache: dict[int, dict[str, str]] = {}
             feed = [FeedEvent(
                 id=e.id, at=e.at, subject=e.subject, operation=e.operation, task_id=e.task_id,
                 step=e.step_run_id and tx.get_step_run(e.step_run_id).step, detail=e.detail,
-                values=self._values(tx, e.task_id) if e.task_id else {})
-                for e in tx.events_after(after_id, limit)]
+                values=cache[e.task_id] if e.task_id in cache else cache.setdefault(
+                    e.task_id, self._values(tx, e.task_id)) if e.task_id else {})
+                for e in tx.events_after(after_id, max(1, min(limit, 1000)))]
             return EventFeed(events=feed, newest_id=feed[-1].id if feed else after_id)
         return self._run(caller, "list_events", {}, body, writes=False)
 

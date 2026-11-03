@@ -150,7 +150,7 @@ class ServiceBase:
         task, s = tx.get_task(task_id), self._wf.step(step)
         if rnd == 1 and s.kind == "agent" and task.route in s.routes:
             by = task.created_by
-            tx.update_step_run(run_id, status="completed", claimed_by=by, outcome=task.route,
+            tx.update_step_run(run_id, status="completed", claimed_by=by.split(" (")[0], outcome=task.route,
                                evidence={"findings": f"route set at intake by {by}"},
                                closed_at=self._clock())
             self._event(tx, CORE, "route_at_intake", _Ids(task_id, run_id),
@@ -170,9 +170,9 @@ class ServiceBase:
         """task.* and evidence.<step>.<key> (latest completed run of each step) for substitution."""
         task = tx.get_task(task_id)
         out = {"task.id": str(task.id), "task.title": task.title, "task.request": task.request}
-        latest = {r.step: r for r in tx.list_step_runs(task_id) if r.status == "completed" and r.evidence}
+        latest = {r.step: r for r in tx.list_step_runs(task_id) if r.status == "completed"}
         return out | {f"evidence.{r.step}.{k}": str(v) for r in latest.values()
-                      for k, v in r.evidence.items()}
+                      for k, v in (r.evidence or {}).items()}
 
     def _artifacts(self, tx: Tx, task_id: int) -> list[Artifact]:
         out = []
