@@ -151,7 +151,6 @@ async def _review(url: str, ns, token: str) -> dict:
 
 
 async def _approve_workflow(url: str, ns, token: str) -> dict:
-    """`taktloop workflow approve`: approve the draft as it stands, naming its base version."""
     draft = await _call_tool(url, "get_workflow", {"draft": True}, token)
     return await _call_tool(url, "approve_workflow", {"base_version": draft["base_version"]}, token)
 
@@ -232,14 +231,17 @@ def run_client(ns, cfg) -> int:
     if not _valid_url(url):
         print(f"taktloop: invalid URL {url}", file=sys.stderr)
         return 2
-    tool, args, render = _request(ns)
     try:
+        tool, args, render = _request(ns)
         special = _review if ns.cmd == "review" else _approve_workflow if tool == "approve_workflow" else None
         call = (special, url, ns) if special else (_call_tool, url, tool, args)
         result = anyio.run(*call, _bearer(ns, cfg))
     except ToolRejected as e:
         print(f"rejected: {e}", file=sys.stderr)
         return 1
+    except (OSError, yaml.YAMLError) as e:  # the file given to `workflow put`
+        print(f"taktloop: {' '.join(str(e).split())}", file=sys.stderr)
+        return 2
     except TokenRejected:
         print("taktloop: token missing or expired; get a new one with taktloop token <identity>", file=sys.stderr)
         return 2

@@ -452,3 +452,9 @@ def test_approves_target_without_artifacts_is_a_problem():
                    g={"kind": "human_gate", "role": "r", "on_approve": "done", "on_reject": "w", "approves": "t"})
     assert not steps["t"].required_artifacts and not steps["t"].is_review
     assert any("approves 't'" in p for p in graph_problems(steps, "w"))
+
+
+def test_step_with_an_unknown_key_is_refused():
+    with pytest.raises(WorkflowError, match="unknown key nxet"):
+        parse_step("a", {"kind": "agent", "role": "r", "skill": "s", "nxet": "done",
+                         "output": {"artifacts": ["x"]}, "next": "done"})

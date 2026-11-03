@@ -13,6 +13,10 @@ CANCELLED = "cancelled"  # reserved target name: the task is cancelled
 ROUTE_NAME = re.compile(r"[a-z][a-z_]*")
 TASK_FIELDS = ("task.id", "task.title", "task.request")
 KINDS = ("agent", "human_gate", "code")
+ALLOWED_KEYS = {"kind", "role", "description", "skill", "instructions", "output", "next",
+                "on_approve", "on_reject", "routes", "approves", "dispatch", "push", "check",
+                "evidence", "on_fail", "call", "review_of", "on_pass", "on_issues",
+                "max_issue_rounds", "on_escalate"}
 REVIEW_KEYS = ("review_of", "on_pass", "on_issues", "max_issue_rounds", "on_escalate")
 
 
@@ -88,6 +92,8 @@ def parse_step(name: str, raw: Any) -> Step:
         raise WorkflowError(
             f"step {name!r}: kind {kind!r} is not supported yet (supported: {', '.join(KINDS)})"
         )
+    if unknown := sorted(set(raw) - ALLOWED_KEYS):
+        raise WorkflowError(f"step {name!r}: unknown key {', '.join(unknown)}")
     for key in ("next", "on_approve", "on_reject", "on_fail", *(k for k in REVIEW_KEYS if k != "max_issue_rounds")):
         v = raw.get(key)
         if not (v is None or isinstance(v, str) or (key == "on_reject" and isinstance(v, list) and all(isinstance(t, str) for t in v))):
@@ -102,8 +108,8 @@ def parse_step(name: str, raw: Any) -> Step:
     if kind == "agent":
         skill = raw.get("skill")
         out = raw.get("output") or {}
-        artifacts = out.get("artifacts") or () if isinstance(out, dict) else None
-        if artifacts is None or not isinstance(artifacts, (list, tuple)) or not all(isinstance(a, str) for a in artifacts):
+        artifacts = out.get("artifacts") or [] if isinstance(out, dict) else None
+        if not isinstance(artifacts, list) or not all(isinstance(a, str) for a in artifacts):
             raise WorkflowError(f"step {name!r}: output must be a mapping with a list of artifact names")
         artifacts = tuple(artifacts)
         nxt = raw.get("next")

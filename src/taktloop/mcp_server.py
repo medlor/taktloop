@@ -178,9 +178,7 @@ def build_server(service: Service, factory: str, verifier: JwtVerifier | None,
 
     @tool
     def put_step(ctx: Context, name: str, definition: dict) -> WorkflowView:
-        """Factory assistant or owner: add or replace one step in the workflow draft (it starts as
-        a copy of the live version). A malformed step is refused; gaps (a target that does not
-        exist yet) come back as problems."""
+        """Add or replace a step in the workflow draft; gaps come back as problems."""
         return service.put_step(caller(ctx), name, definition)
 
     @tool
@@ -200,8 +198,7 @@ def build_server(service: Service, factory: str, verifier: JwtVerifier | None,
 
     @tool
     def approve_workflow(ctx: Context, base_version: int) -> WorkflowView:
-        """Factory owner only: make the draft the next live version (writes workflow.yaml).
-        `base_version` is the version the draft is based on."""
+        """Owner only: make the draft (based on `base_version`) the next live version."""
         return service.approve_workflow(caller(ctx), base_version)
 
     return server

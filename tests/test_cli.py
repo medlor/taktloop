@@ -471,12 +471,13 @@ def test_serve_refuses_values_json_cannot_hold(tmp_path, capsys):
 def test_render_workflow():
     d = {"version": 1, "draft": True, "base_version": 1, "problems": ["step 'a' points to unknown step 'z'"],
          "data": {"start": "a", "steps": {
-             "a": {"kind": "agent", "role": "b", "next": "z", "description": "Does a"},
+             "a": {"kind": "agent", "role": "b", "skill": "s", "output": {"artifacts": ["x"]},
+                   "next": "z", "description": "Does a"},
              "g": {"kind": "human_gate", "role": "approver", "on_approve": "a", "on_reject": ["a"]},
-             "t": {"kind": "agent", "role": "triage", "routes": {"quick": "a"}}}}}
+             "t": {"kind": "agent", "role": "triage", "skill": "s", "routes": {"quick": "a"}}}}}
     assert cli_commands.render_workflow(d).splitlines() == [
         "draft based on version 1", "a: agent b → z", "  Does a", "g: human_gate approver → a, a",
-        "t: agent triage → quick:a", "problem: step 'a' points to unknown step 'z'"]
+        "t: agent triage → a", "problem: step 'a' points to unknown step 'z'"]
     assert cli_commands.render_workflow({**d, "draft": False, "problems": []}).startswith("version 1\n")
 
 
@@ -491,3 +492,12 @@ def test_workflow_approve_names_the_drafts_base(monkeypatch, capsys):
     assert cli.main(["--url", "http://127.0.0.1:1", "workflow", "approve"]) == 0
     assert calls == [("get_workflow", {"draft": True}), ("approve_workflow", {"base_version": 2})]
     assert capsys.readouterr().out.startswith("version 3")
+
+
+def test_workflow_put_bad_file_is_one_line(tmp_path, capsys):
+    bad = tmp_path / "bad.yaml"
+    bad.write_text("a: [unclosed")
+    for path in (tmp_path / "missing.yaml", bad):
+        assert cli.main(["--url", "http://127.0.0.1:1", "workflow", "put", "x", str(path)]) == 2
+        err = capsys.readouterr().err
+        assert err.startswith("taktloop: ") and "Traceback" not in err and err.count("\n") == 1
