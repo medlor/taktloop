@@ -42,6 +42,7 @@ class SweptStep(BaseModel):
     task_id: int
     step: str
     kind: str
+    workflow_version: int
     role: str
     dispatch: str
     push_identity: str | None

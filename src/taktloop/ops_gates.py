@@ -28,15 +28,16 @@ class GateOps(ServiceBase):
             ids.task_id = task_id
             run = tx.current_step_run(task_id)
             run = self._expire(tx, run) if run else None
-            if run is None or self._wf.step(run.step).kind != "human_gate" or run.status != "open":
+            wf = self._wf_of(tx, task_id)
+            if run is None or wf.step(run.step).kind != "human_gate" or run.status != "open":
                 raise Rejected(f"task {task_id} is not at a gate")
             ids.step_run_id = run.id
             names["gate"] = run.step
-            require(caller, "decide_gate", self._wf.step(run.step))
+            require(caller, "decide_gate", wf.step(run.step))
             if gate is not None and gate != run.step:
                 raise Rejected(f"task {task_id} is at gate {run.step}, not {gate}")
-            step = self._wf.step(run.step)
-            approved = approved_step(self._wf, step, None)
+            step = wf.step(run.step)
+            approved = approved_step(wf, step, None)
             self._separate(tx, task_id,
                            lambda recs: check_approval(approved, caller.subject, recs))
             if step.routes or decision == "route":
@@ -78,7 +79,8 @@ class GateOps(ServiceBase):
             if task is None:
                 raise Rejected(f"unknown task {task_id}")
             ids.task_id = task_id
-            review = self._wf.steps.get(review_step)
+            wf = self._wf_of(tx, task_id)
+            review = wf.steps.get(review_step)
             if review is None or not review.is_review:
                 raise Rejected(f"{review_step} is not a review step")
             names["reason"] = clean_reason(reason)
@@ -91,7 +93,7 @@ class GateOps(ServiceBase):
                     run.step == review.review_of and verdicts and run.id > verdicts[0].id)):
                 raise Rejected(f"task {task_id} has no review of {review.review_of} to override")
             ids.step_run_id = run.id
-            approved = approved_step(self._wf, None, review)
+            approved = approved_step(wf, None, review)
             self._separate(tx, task_id,
                            lambda recs: check_approval(approved, caller.subject, recs))
             if run.status == "claimed":

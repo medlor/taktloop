@@ -16,6 +16,7 @@ from taktloop.external import Checker, credential, make_checker, read_dotenv
 from taktloop.mcp_server import build_server
 from taktloop.service import Service
 from taktloop.store import Store
+from taktloop.workflow_file import read as read_workflow, write as write_workflow
 
 
 class _Server(uvicorn.Server):
@@ -66,13 +67,22 @@ def build_checker(cfg: FactoryConfig) -> Checker:
     return make_checker(cfg.mcp_servers, os.environ, dotenv)
 
 
+def prepare(cfg: FactoryConfig) -> Service:
+    """Build the service from workflow.yaml; rewrite the file if a hand edit became a new version."""
+    workflow = read_workflow(cfg.workflow_path)
+    cfg.database.parent.mkdir(parents=True, exist_ok=True)
+    service = Service(Store(cfg.database), workflow, timedelta(minutes=cfg.lease_minutes),
+                      separation=cfg.separation, checker=build_checker(cfg))
+    if service.live_version != workflow.version:
+        write_workflow(cfg.workflow_path, service.live_data(), service.live_version)
+    return service
+
+
 def run(cfg: FactoryConfig) -> None:
     handler = logging.StreamHandler()
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
     logging.getLogger("taktloop").addHandler(handler)
-    cfg.database.parent.mkdir(parents=True, exist_ok=True)
-    service = Service(Store(cfg.database), cfg.workflow, timedelta(minutes=cfg.lease_minutes),
-                      separation=cfg.separation, checker=build_checker(cfg))
+    service = prepare(cfg)
     verifier = JwtVerifier(cfg.auth_issuer, cfg.auth_audience)
     app = build_server(service, cfg.factory, verifier, cfg.url).streamable_http_app(host=cfg.host)
     print(f"taktloop core for factory '{cfg.factory}' on {cfg.url}", flush=True)

@@ -8,10 +8,12 @@ import sqlite3
 import threading
 from collections.abc import Collection, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+from taktloop.store_rows import (ArtifactRow, DraftRow, EventRow, StepRunRow, TaskRow,
+                                 WorkflowVersionRow)
 
 SCHEMA_VERSION = 3
 
@@ -20,7 +22,8 @@ CREATE TABLE tasks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     title TEXT NOT NULL, request TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'active',
-    created_by TEXT NOT NULL, created_at TEXT NOT NULL, route TEXT
+    created_by TEXT NOT NULL, created_at TEXT NOT NULL, route TEXT,
+    workflow_version INTEGER NOT NULL
 );
 CREATE TABLE step_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -43,6 +46,14 @@ CREATE TABLE events (
     task_id INTEGER, step_run_id INTEGER,
     detail TEXT NOT NULL, result TEXT NOT NULL, reason TEXT
 );
+CREATE TABLE workflow_versions (
+    version INTEGER PRIMARY KEY, data TEXT NOT NULL, sha256 TEXT NOT NULL, source TEXT NOT NULL,
+    approved_by TEXT, approved_at TEXT NOT NULL
+);
+CREATE TABLE workflow_draft (
+    id INTEGER PRIMARY KEY CHECK (id = 1), base_version INTEGER NOT NULL, data TEXT NOT NULL,
+    updated_by TEXT NOT NULL, updated_at TEXT NOT NULL
+);
 CREATE INDEX step_runs_task ON step_runs(task_id);
 CREATE INDEX artifacts_task ON artifacts(task_id);
 CREATE INDEX events_task ON events(task_id);
@@ -53,61 +64,9 @@ class SchemaMismatch(RuntimeError):
     pass
 
 
-@dataclass(frozen=True)
-class TaskRow:
-    id: int
-    title: str
-    request: str
-    status: str
-    created_by: str
-    created_at: datetime
-    route: str | None
-
-
-@dataclass(frozen=True)
-class StepRunRow:
-    id: int
-    task_id: int
-    step: str
-    round: int
-    status: str
-    claimed_by: str | None
-    claimed_executor: str | None
-    claim_token: str | None
-    lease_expires_at: datetime | None
-    outcome: str | None
-    evidence: dict | None
-    opened_at: datetime
-    closed_at: datetime | None
-
-
-@dataclass(frozen=True)
-class ArtifactRow:
-    task_id: int
-    step_run_id: int
-    name: str
-    path: str
-    commit: str
-    branch: str
-
-
-@dataclass(frozen=True)
-class EventRow:
-    id: int
-    at: datetime
-    subject: str
-    roles: list[str]
-    executor: str | None
-    operation: str
-    task_id: int | None
-    step_run_id: int | None
-    detail: dict
-    result: str
-    reason: str | None
-
-
-_DATETIME_FIELDS = {"created_at", "lease_expires_at", "opened_at", "closed_at", "at"}
-_JSON_FIELDS = {"evidence", "detail", "roles"}
+_DATETIME_FIELDS = {"created_at", "lease_expires_at", "opened_at", "closed_at", "at",
+                    "approved_at", "updated_at"}
+_JSON_FIELDS = {"evidence", "detail", "roles", "data"}
 _STEP_RUN_FIELDS = {f.name for f in dataclasses.fields(StepRunRow)} - {"id"}
 
 
@@ -153,10 +112,10 @@ class Tx:
 
     # tasks
     def insert_task(self, title: str, request: str, created_by: str, at: datetime,
-                    route: str | None = None) -> int:
+                    route: str | None = None, workflow_version: int = 1) -> int:
         cur = self._c.execute(
-            "INSERT INTO tasks (title, request, created_by, created_at, route) VALUES (?,?,?,?,?)",
-            (title, request, created_by, _encode("created_at", at), route))
+            "INSERT INTO tasks (title, request, created_by, created_at, route, workflow_version) VALUES (?,?,?,?,?,?)",
+            (title, request, created_by, _encode("created_at", at), route, workflow_version))
         return cur.lastrowid
 
     def get_task(self, id: int) -> TaskRow | None:
@@ -242,6 +201,29 @@ class Tx:
 
     def list_events(self, task_id: int) -> list[EventRow]:
         return self._all(EventRow, "SELECT * FROM events WHERE task_id=? ORDER BY id", (task_id,))
+
+    # workflow versions and the draft
+    def insert_workflow_version(self, version: int, data: dict, sha: str, source: str,
+                                by: str | None, at: datetime) -> None:
+        self._c.execute("INSERT INTO workflow_versions VALUES (?,?,?,?,?,?)", (
+            version, _encode("data", data), sha, source, by, _encode("approved_at", at)))
+
+    def latest_workflow_version(self) -> WorkflowVersionRow | None:
+        return self._one(WorkflowVersionRow,
+                         "SELECT * FROM workflow_versions ORDER BY version DESC LIMIT 1")
+
+    def get_workflow_version(self, v: int) -> WorkflowVersionRow | None:
+        return self._one(WorkflowVersionRow, "SELECT * FROM workflow_versions WHERE version=?", (v,))
+
+    def get_draft(self) -> DraftRow | None:
+        return self._one(DraftRow, "SELECT * FROM workflow_draft")
+
+    def put_draft(self, base_version: int, data: dict, by: str, at: datetime) -> None:
+        self._c.execute("INSERT OR REPLACE INTO workflow_draft VALUES (1,?,?,?,?)", (
+            base_version, _encode("data", data), by, _encode("updated_at", at)))
+
+    def delete_draft(self) -> None:
+        self._c.execute("DELETE FROM workflow_draft")
 
 
 class Store:

@@ -142,10 +142,11 @@ async def _review(url: str, ns, token: str) -> dict:
 def _serve(cfg) -> int:
     from taktloop import serve  # the server stack; client commands never load it
     from taktloop.store import SchemaMismatch
+    from taktloop.workflow import WorkflowError
 
     try:
         serve.run(cfg)
-    except SchemaMismatch as e:  # an M1 database: tell the user to delete it, no traceback
+    except (SchemaMismatch, WorkflowError) as e:  # an old database or a broken workflow.yaml
         print(f"taktloop: {e}", file=sys.stderr)
         return 2
     return 0

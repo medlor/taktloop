@@ -151,3 +151,12 @@ def test_concurrent_transactions(tmp_path):
     [t.join() for t in threads]
     s.close()
     assert len(wins) == 1
+
+
+def test_v2_database_refused(tmp_path):
+    path = tmp_path / "factory.db"
+    raw = sqlite3.connect(path)
+    raw.execute("PRAGMA user_version = 2")
+    raw.close()
+    with pytest.raises(SchemaMismatch, match=f"schema version 2, expected 3; delete {path}"):
+        Store(path)

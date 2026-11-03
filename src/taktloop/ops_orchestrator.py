@@ -13,14 +13,15 @@ class OrchestratorOps(ServiceBase):
         def body(tx: Tx, ids: _Ids) -> list[SweptStep]:
             out = []
             for run in tx.step_runs_with_status(["open", "claimed"]):
-                step = self._wf.step(run.step)
+                step = self._wf_of(tx, run.task_id).step(run.step)
                 mine = [e for e in tx.list_events(run.task_id) if e.step_run_id == run.id
                         and e.result == "ok"]
                 idle = [e.at for e in mine if e.operation in ("lease_expired", "release_step")]
                 out.append(SweptStep(
                     step_id=run.id, task_id=run.task_id, step=run.step, kind=step.kind,
                     role=step.role, dispatch=step.dispatch, push_identity=step.push_identity,
-                    status=run.status, claimed_by=run.claimed_by,
+                    status=run.status, workflow_version=tx.get_task(run.task_id).workflow_version,
+                    claimed_by=run.claimed_by,
                     idle_since=max(idle, default=run.opened_at),
                     lease_expiries=sum(e.operation == "lease_expired" for e in mine),
                     stalled=_stall_reason(tx, run) is not None))

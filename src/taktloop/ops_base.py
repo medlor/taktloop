@@ -13,7 +13,8 @@ from taktloop.permissions import require
 from taktloop.rules import Rejected, same_token, waiting_for
 from taktloop.separation import Record
 from taktloop.store import StepRunRow, Store, TaskRow, Tx
-from taktloop.workflow import CANCELLED, DONE, Workflow
+from taktloop.workflow import CANCELLED, DONE, Workflow, parse_workflow
+from taktloop.workflow_file import data_sha
 
 
 @dataclass(frozen=True)
@@ -52,8 +53,43 @@ class ServiceBase:
                  lease: timedelta = timedelta(minutes=30),
                  clock: Callable[[], datetime] = _utc_now, separation: str = "off",
                  checker: Checker | None = None) -> None:
-        self._store, self._wf, self._lease, self._clock = store, workflow, lease, clock
+        self._store, self._lease, self._clock = store, lease, clock
         self._separation, self._checker = separation, checker
+        self._versions: dict[int, Workflow] = {}
+        self._reconcile(workflow)
+
+    def _reconcile(self, workflow: Workflow) -> None:
+        """Snapshot the file's workflow: as its own version on first start, as the next version
+        when it differs from the latest snapshot (a hand edit)."""
+        with self._store.transaction() as tx:
+            latest, sha = tx.latest_workflow_version(), data_sha(workflow.data)
+            if latest is None or latest.sha256 != sha:
+                if latest:
+                    workflow = parse_workflow(workflow.data, latest.version + 1)
+                tx.insert_workflow_version(workflow.version, workflow.data, sha, "file", None,
+                                           self._clock())
+                if latest:
+                    self._event(tx, CORE, "workflow_changed", _Ids(),
+                                {"version": workflow.version, "source": "file"})
+            else:
+                workflow = parse_workflow(latest.data, latest.version)
+        self.live_version = workflow.version
+        self._versions[workflow.version] = workflow
+
+    def live_data(self) -> dict:
+        return self._versions[self.live_version].data
+
+    def _version(self, tx: Tx, version: int) -> Workflow:
+        if version not in self._versions:
+            self._versions[version] = parse_workflow(
+                tx.get_workflow_version(version).data, version)
+        return self._versions[version]
+
+    def _wf_of(self, tx: Tx, task_id: int) -> Workflow:
+        return self._version(tx, tx.get_task(task_id).workflow_version)
+
+    def _live(self, tx: Tx) -> Workflow:
+        return self._version(tx, self.live_version)
 
     # --- shared helpers -------------------------------------------------
 
@@ -119,7 +155,7 @@ class ServiceBase:
     def _load_owned(self, tx: Tx, ids: _Ids, caller: Caller, operation: str, step_id: int,
                     claim_token: str) -> StepRunRow:
         run = self._load(tx, ids, step_id)
-        require(caller, operation, self._wf.step(run.step))
+        require(caller, operation, self._wf_of(tx, run.task_id).step(run.step))
         if run.status != "claimed":
             raise Rejected("step is not claimed (lease expired or released); claim it again")
         _check_owner(run, caller, claim_token)
@@ -130,14 +166,15 @@ class ServiceBase:
         if task.status == "active":
             run = tx.current_step_run(task.id)
             run = self._expire(tx, run) if run else None
+        wf = self._wf_of(tx, task.id)
         return TaskSummary(
             id=task.id, title=task.title, status=task.status,
             current_step=run.step if run else None, step_id=run.id if run else None,
             waiting_for="cancelled" if task.status == "cancelled" else waiting_for(
-                self._wf.step(run.step) if run else None,
+                wf.step(run.step) if run else None,
                 run.status if run else "open", _holder(run) if run else None,
                 run.lease_expires_at if run else None,
-                self._wf.escalating_review(run.step) if run else None,
+                wf.escalating_review(run.step) if run else None,
                 _stall_reason(tx, run) if run else None))
 
     def _open_step(self, tx: Tx, task_id: int, step: str) -> int:
@@ -147,7 +184,8 @@ class ServiceBase:
         rnd = (last.round if last else 0) + 1
         run_id = tx.insert_step_run(task_id, step, rnd, self._clock())
         self._event(tx, CORE, "step_opened", _Ids(task_id, run_id), {"step": step, "round": rnd})
-        task, s = tx.get_task(task_id), self._wf.step(step)
+        task = tx.get_task(task_id)
+        s = self._wf_of(tx, task_id).step(step)
         if rnd == 1 and s.kind == "agent" and task.route in s.routes:
             by = task.created_by
             tx.update_step_run(run_id, status="completed", claimed_by=by.split(" (")[0], outcome=task.route,

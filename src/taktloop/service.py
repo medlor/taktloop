@@ -19,14 +19,16 @@ class Service(StepOps, GateOps, OrchestratorOps):
         def body(tx: Tx, ids: _Ids) -> TaskSummary:
             if not title.strip():
                 raise Rejected("title must not be empty")
-            names = {n for s in self._wf.steps.values() if s.kind == "agent" for n in s.routes}
+            names = {n for s in self._live(tx).steps.values() if s.kind == "agent" for n in s.routes}
             if route is not None and "approver" not in caller.roles:
                 raise Rejected(f"--route requires role approver; you have "
                                f"{', '.join(sorted(caller.roles)) or 'none'}")
             if route is not None and route not in names:
                 raise Rejected(f"route must be one of: {', '.join(sorted(names)) or 'none defined'}")
-            ids.task_id = tx.insert_task(title.strip(), request, caller.label, self._clock(), route)
-            ids.step_run_id = self._open_step(tx, ids.task_id, self._wf.start)
+            live = self._live(tx)
+            ids.task_id = tx.insert_task(title.strip(), request, caller.label, self._clock(), route,
+                                         live.version)
+            ids.step_run_id = self._open_step(tx, ids.task_id, live.start)
             return self._summary(tx, tx.get_task(ids.task_id))
         detail = {"title": title, "request": request, **({"route": route} if route else {})}
         return self._run(caller, "create_task", detail, body)
@@ -35,7 +37,7 @@ class Service(StepOps, GateOps, OrchestratorOps):
         def body(tx: Tx, ids: _Ids) -> list[OpenStep]:
             out = []
             for run in tx.step_runs_with_status(["open"]):
-                step = self._wf.step(run.step)
+                step = self._wf_of(tx, run.task_id).step(run.step)
                 if step.kind in ("agent", "code") and step.role in caller.roles:
                     out.append(OpenStep(step_id=run.id, task_id=run.task_id,
                                         task_title=tx.get_task(run.task_id).title,
@@ -46,7 +48,8 @@ class Service(StepOps, GateOps, OrchestratorOps):
     def get_step_context(self, caller: Caller, step_id: int) -> StepContext:
         def body(tx: Tx, ids: _Ids) -> StepContext:
             run = self._load(tx, ids, step_id)
-            task, step = tx.get_task(run.task_id), self._wf.step(run.step)
+            task = tx.get_task(run.task_id)
+            step = self._wf_of(tx, task.id).step(run.step)
             return StepContext(
                 step_id=run.id, task_id=task.id, task_title=task.title, request=task.request,
                 step=run.step, skill=step.skill or "", instructions=step.instructions,
@@ -72,7 +75,7 @@ class Service(StepOps, GateOps, OrchestratorOps):
                                      executor=e.executor, operation=e.operation,
                                      step=steps[e.step_run_id], result=e.result,
                                      reason=e.reason, detail=e.detail))
-            step = self._wf.step(summary.current_step) if summary.current_step else None
+            step = self._wf_of(tx, task_id).step(summary.current_step) if summary.current_step else None
             return TaskDetail(**summary.model_dump(), request=task.request,
                               description=step.description if step else "",
                               artifacts=self._artifacts(tx, task_id), history=history)

@@ -19,15 +19,16 @@ class StepOps(ServiceBase):
     def claim_step(self, caller: Caller, step_id: int) -> Claim:
         def body(tx: Tx, ids: _Ids) -> Claim:
             run = self._load(tx, ids, step_id)
-            require(caller, "claim_step", self._wf.step(run.step))
+            wf = self._wf_of(tx, run.task_id)
+            require(caller, "claim_step", wf.step(run.step))
             if run.status == "claimed":
                 raise Rejected("step is already claimed")
             if run.status != "open":
                 raise Rejected(f"step is not open (status: {run.status})")
-            if self._wf.step(run.step).kind not in ("agent", "code"):
+            if wf.step(run.step).kind not in ("agent", "code"):
                 raise Rejected("step is a human gate and cannot be claimed")
             self._separate(tx, run.task_id, lambda recs: check_claim(
-                self._wf, self._wf.step(run.step), caller.subject, recs))
+                wf, wf.step(run.step), caller.subject, recs))
             tx.update_step_run(run.id, status="claimed", claimed_by=caller.subject,
                                claimed_executor=caller.executor,
                                claim_token=secrets.token_hex(16))
@@ -49,7 +50,7 @@ class StepOps(ServiceBase):
 
         def validate(tx: Tx, ids: _Ids) -> tuple[int, CheckDecl | None]:
             run = self._load_owned(tx, ids, caller, "complete_step", step_id, claim_token)
-            step = self._wf.step(run.step)
+            step = self._wf_of(tx, run.task_id).step(run.step)
             _check_evidence(step.evidence, evidence)
             if not step.check:
                 return run.task_id, None
@@ -65,7 +66,7 @@ class StepOps(ServiceBase):
 
         def body(tx: Tx, ids: _Ids) -> TaskSummary:
             run = self._load_owned(tx, ids, caller, "complete_step", step_id, claim_token)
-            step = self._wf.step(run.step)
+            step = self._wf_of(tx, run.task_id).step(run.step)
             if step.routes:
                 _check_route(step, outcome, artifacts, detail["findings"])
             elif step.is_review:
@@ -147,7 +148,7 @@ class StepOps(ServiceBase):
         def body(tx: Tx, ids: _Ids) -> TaskSummary:
             run = self._load(tx, ids, step_id)
             require(caller, "release_step --force" if force else "release_step",
-                    self._wf.step(run.step))
+                    self._wf_of(tx, run.task_id).step(run.step))
             if not reason.strip():
                 raise Rejected("reason is required")
             if run.status != "claimed":

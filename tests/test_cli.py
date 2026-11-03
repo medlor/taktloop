@@ -8,6 +8,7 @@ from taktloop import cli, cli_commands
 
 ONLY = {"start": "only", "steps": {"only": {"kind": "agent", "role": "planner", "skill": "s",
                                             "output": {"artifacts": ["doc"]}, "next": "done"}}}
+AUTH = {"issuer": "http://127.0.0.1:8766", "audience": "taktloop"}
 SHA = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
 
 DETAIL = {
@@ -429,3 +430,28 @@ def test_orchestrator_needs_block(tmp_path, capsys):
     cfg = write_factory(tmp_path, {"auth": {"issuer": "http://127.0.0.1:8766", "audience": "taktloop"}}, ONLY)
     assert cli.main(["orchestrator", "--config", str(cfg)]) == 2
     assert capsys.readouterr().err == "taktloop: factory.yaml has no orchestrator block\n"
+
+
+def test_serve_refuses_broken_workflow_file(tmp_path, capsys):
+    broken = {"start": "a", "steps": {"a": {"kind": "agent", "role": "planner", "skill": "s",
+                                            "output": {"artifacts": ["doc"]}, "next": "nowhere"}}}
+    cfg = write_factory(tmp_path, {"database": str(tmp_path / "f.db"), "auth": AUTH}, broken)
+    assert cli.main(["--config", str(cfg), "serve"]) == 2
+    err = capsys.readouterr().err
+    assert err.startswith("taktloop: ") and "unknown step" in err
+    assert err.count("\n") == 1 and "Traceback" not in err
+
+
+def test_serve_rewrites_file_version(tmp_path):
+    import yaml
+    from taktloop import serve
+    from taktloop.config import load_config
+
+    cfg_path = write_factory(tmp_path, {"database": str(tmp_path / "f.db"), "auth": AUTH}, ONLY)
+    cfg = load_config(cfg_path)
+    assert serve.prepare(cfg).live_version == 1
+    assert yaml.safe_load(cfg.workflow_path.read_text()) == ONLY  # no version key: left alone
+    edited = {**ONLY, "steps": {"only": {**ONLY["steps"]["only"], "instructions": "new"}}}
+    cfg.workflow_path.write_text(yaml.safe_dump(edited, sort_keys=False))
+    assert serve.prepare(cfg).live_version == 2
+    assert yaml.safe_load(cfg.workflow_path.read_text()) == {"version": 2, **edited}
