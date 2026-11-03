@@ -445,3 +445,10 @@ def test_task_placeholders_allowed_in_call_args():
         "call": {"mcp_server": "tickets", "tool": "create_ticket",
                  "args": {"title": "{{task.title}}", "body": "{{task.request}}"},
                  "evidence": {"ticket": "id"}}, "next": "done"}}})
+
+
+def test_approves_target_without_artifacts_is_a_problem():
+    steps = _steps(t={"kind": "agent", "role": "r", "skill": "s", "routes": {"q": "c"}},
+                   g={"kind": "human_gate", "role": "r", "on_approve": "done", "on_reject": "w", "approves": "t"})
+    assert not steps["t"].required_artifacts and not steps["t"].is_review
+    assert any("approves 't'" in p for p in graph_problems(steps, "w"))
