@@ -3,6 +3,7 @@
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import anyio
 from mcp import Client
@@ -11,7 +12,7 @@ from mcp.shared._httpx_utils import create_mcp_http_client
 
 from taktloop.checks import CheckUnavailable, read_result
 
-Checker = Callable[[str, str, dict[str, str]], dict]  # (server name, tool, args) -> result
+Checker = Callable[[str, str, dict[str, Any]], dict]  # (server name, tool, args) -> result
 
 
 @dataclass(frozen=True)

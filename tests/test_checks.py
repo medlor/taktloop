@@ -1,17 +1,40 @@
 import pytest
 
-from taktloop.checks import (CheckUnavailable, compare, describe, parse_check, placeholders,
-                             read_result, resolve)
+from taktloop.checks import (CheckUnavailable, compare, describe, lookup, parse_call, parse_check,
+                             placeholders, read_result, resolve, substitute)
 from taktloop.models import Artifact
 
 
-def test_parse_check_stringifies_values():
-    d = parse_check({"mcp_server": "github", "tool": "actions_get",
-                     "args": {"resource_id": "{{evidence.ci_run}}", "page": 1},
-                     "match": {"workflow_run.status": "completed"},
-                     "expect": {"workflow_run.conclusion": "success"}})
-    assert d.args == {"resource_id": "{{evidence.ci_run}}", "page": "1"}
-    assert placeholders(d) == {"evidence.ci_run"}
+def test_parse_check_keeps_nested_args():
+    d = parse_check({"mcp_server": "github", "tool": "actions_list",
+                     "args": {"page": 1, "workflow_runs_filter": {"branch": "{{artifacts.change.branch}}"}},
+                     "expect": {"x": "y"}})
+    assert d.args == {"page": 1, "workflow_runs_filter": {"branch": "{{artifacts.change.branch}}"}}
+    assert placeholders(d) == {"artifacts.change.branch"}
+
+
+def test_parse_call():
+    c = parse_call({"mcp_server": "github", "tool": "actions_list", "args": {"a": "b"},
+                    "evidence": {"ci_run": "workflow_runs.workflow_runs.0.id"}})
+    assert c.evidence == {"ci_run": "workflow_runs.workflow_runs.0.id"}
+    for bad in ({"tool": "t", "evidence": {"k": "p"}}, {"mcp_server": "g", "tool": "t"},
+                {"mcp_server": "g", "tool": "t", "evidence": {"k": "p"}, "expect": {}}):
+        with pytest.raises(ValueError):
+            parse_call(bad)
+
+
+def test_substitute_nested():
+    arts = {"change": Artifact(name="change", path=".", commit="c" * 40, branch="taktloop/1-x",
+                               step="build", round=1)}
+    assert substitute({"f": {"branch": "{{artifacts.change.branch}}"}, "n": 3, "l": ["{{artifacts.change.commit}}"]},
+                      {}, arts) == {"f": {"branch": "taktloop/1-x"}, "n": 3, "l": ["c" * 40]}
+
+
+def test_lookup_indexes_lists():
+    r = {"workflow_runs": {"workflow_runs": [{"id": 7}, {"id": 6}]}}
+    assert lookup(r, "workflow_runs.workflow_runs.0.id") == "7"
+    assert lookup(r, "workflow_runs.workflow_runs.5.id") is None
+    assert lookup({"workflow_runs": {"workflow_runs": []}}, "workflow_runs.workflow_runs.0.id") is None
 
 
 def test_placeholders_cover_args_match_and_expect():

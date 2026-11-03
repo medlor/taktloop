@@ -16,7 +16,7 @@ FIELDS = ("mcp_server", "tool", "args", "match", "expect")
 class CheckDecl:
     mcp_server: str
     tool: str
-    args: Mapping[str, str]
+    args: Mapping[str, Any]
     match: Mapping[str, str]
     expect: Mapping[str, str]
 
@@ -29,25 +29,63 @@ def _strings(raw: Any, field: str) -> dict[str, str]:
     return {str(k): str(v) for k, v in raw.items()}
 
 
-def parse_check(raw: Any) -> CheckDecl:
+@dataclass(frozen=True)
+class CallDecl:
+    mcp_server: str
+    tool: str
+    args: Mapping[str, Any]
+    evidence: Mapping[str, str]  # evidence key -> dotted path into the result
+
+
+def _args(raw: Any, what: str) -> dict[str, Any]:
+    if raw is not None and not isinstance(raw, dict):
+        raise ValueError(f"{what} args must be a mapping")
+    return dict(raw or {})
+
+
+def _server_tool(raw: Any, what: str) -> None:
     if not isinstance(raw, dict):
-        raise ValueError("check must be a mapping")
+        raise ValueError(f"{what} must be a mapping")
+    for field in ("mcp_server", "tool"):
+        if not isinstance(raw.get(field), str) or not raw[field]:
+            raise ValueError(f"{what} needs {field} (a string)")
+
+
+def parse_call(raw: Any) -> CallDecl:
+    _server_tool(raw, "call")
+    unknown = sorted(set(raw) - {"mcp_server", "tool", "args", "evidence"})
+    if unknown:
+        raise ValueError(f"unknown call field {unknown[0]!r}")
+    evidence = raw.get("evidence")
+    if (not isinstance(evidence, dict) or not evidence
+            or not all(isinstance(k, str) and isinstance(v, str) for k, v in evidence.items())):
+        raise ValueError("call needs a non-empty evidence mapping of strings")
+    return CallDecl(raw["mcp_server"], raw["tool"], _args(raw.get("args"), "call"), dict(evidence))
+
+
+def parse_check(raw: Any) -> CheckDecl:
+    _server_tool(raw, "check")
     unknown = sorted(set(raw) - set(FIELDS))
     if unknown:
         raise ValueError(f"unknown check field {unknown[0]!r}")
-    for field in ("mcp_server", "tool"):
-        if not isinstance(raw.get(field), str) or not raw[field]:
-            raise ValueError(f"check needs {field} (a string)")
     expect = _strings(raw.get("expect"), "expect")
     if not expect:
         raise ValueError("check needs a non-empty expect mapping")
-    return CheckDecl(raw["mcp_server"], raw["tool"], _strings(raw.get("args"), "args"),
+    return CheckDecl(raw["mcp_server"], raw["tool"], _args(raw.get("args"), "check"),
                      _strings(raw.get("match"), "match"), expect)
 
 
-def placeholders(decl: CheckDecl) -> set[str]:
-    values = [*decl.args.values(), *decl.match.values(), *decl.expect.values()]
-    return {m for v in values for m in PLACEHOLDER.findall(v)}
+def _strs(node: Any) -> list[str]:
+    if isinstance(node, str):
+        return [node]
+    if isinstance(node, Mapping):
+        node = list(node.values())
+    return [s for v in node for s in _strs(v)] if isinstance(node, list) else []
+
+
+def placeholders(decl: CheckDecl | CallDecl) -> set[str]:
+    parts = [getattr(decl, f) for f in ("args", "match", "expect") if hasattr(decl, f)]
+    return {m for s in _strs(parts) for m in PLACEHOLDER.findall(s)}
 
 
 class CheckUnavailable(Exception):
@@ -61,9 +99,9 @@ class Mismatch:
     want: str
 
 
-def resolve(decl: CheckDecl, evidence: Mapping[str, str],
-            artifacts: Mapping[str, Artifact]) -> CheckDecl:
-    def value(key: str) -> str:
+def substitute(value: Any, evidence: Mapping[str, str], artifacts: Mapping[str, Artifact]) -> Any:
+    """``value`` with every placeholder in any string, at any depth, replaced."""
+    def lookup_key(key: str) -> str:
         kind, _, rest = key.partition(".")
         name, _, attr = rest.partition(".")
         if kind == "evidence" and rest in evidence:
@@ -72,10 +110,19 @@ def resolve(decl: CheckDecl, evidence: Mapping[str, str],
             return getattr(artifacts[name], attr)
         raise CheckUnavailable(f"cannot resolve {{{{{key}}}}}")
 
-    def sub(values: Mapping[str, str]) -> dict[str, str]:
-        return {k: PLACEHOLDER.sub(lambda m: value(m.group(1)), v) for k, v in values.items()}
+    if isinstance(value, str):
+        return PLACEHOLDER.sub(lambda m: lookup_key(m.group(1)), value)
+    if isinstance(value, Mapping):
+        return {k: substitute(v, evidence, artifacts) for k, v in value.items()}
+    if isinstance(value, list):
+        return [substitute(v, evidence, artifacts) for v in value]
+    return value
 
-    return replace(decl, args=sub(decl.args), match=sub(decl.match), expect=sub(decl.expect))
+
+def resolve(decl: CheckDecl, evidence: Mapping[str, str],
+            artifacts: Mapping[str, Artifact]) -> CheckDecl:
+    return replace(decl, **{f: substitute(getattr(decl, f), evidence, artifacts)
+                            for f in ("args", "match", "expect")})
 
 
 def read_result(structured: dict | None, texts: list[str]) -> dict:
@@ -94,7 +141,10 @@ def lookup(result: Mapping, path: str) -> str | None:
     """The value at a dotted path as a string, or None when missing."""
     node: Any = result
     for part in path.split("."):
-        node = node.get(part) if isinstance(node, Mapping) else None
+        if isinstance(node, list):
+            node = node[int(part)] if part.isdigit() and int(part) < len(node) else None
+        else:
+            node = node.get(part) if isinstance(node, Mapping) else None
     return None if node is None else str(node)
 
 
