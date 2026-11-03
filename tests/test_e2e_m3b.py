@@ -146,6 +146,9 @@ def test_m3b_demo(factory, github_runs, capsys):
     verify_id = task["step_id"]
     assert (task["current_step"], launched) == ("verify", [])
     assert task["waiting_for"].startswith("verify in progress by orchestrator"), task["waiting_for"]
+    refused = [e for e in task["history"] if e["operation"] == "complete_step" and e["result"] != "ok"]
+    assert [e["subject"] for e in refused] == ["orchestrator"]
+    assert "status is in_progress" in refused[0]["reason"], refused[0]
     reason = agent_b.refused("claim_step", step_id=verify_id)
     assert "requires role verifier" in reason, reason
     github_runs["102"] = {"head_sha": C2, "head_branch": BRANCH, "path": CI, "status": "completed",

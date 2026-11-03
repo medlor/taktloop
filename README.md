@@ -220,7 +220,7 @@ core, with its own identity (`orchestrator` in `factory.yaml`). Every
   headless Claude Code run as `reviewer-bot`, read-only, which claims and
   reviews the step;
 - calls the core's `sweep` (expired leases return their steps to open) and
-  reports **stalls** (`report_stall` events, shown by `taktloop task show` and `taktloop steps`).
+  reports **stalls** (`report_stall` events, shown by `taktloop task list` and `taktloop task show`).
 
 Setup on top of M3a: create the two new identities with
 `uv run taktloop issuer init` (it adds the missing credentials files), restart
