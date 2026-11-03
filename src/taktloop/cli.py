@@ -7,7 +7,8 @@ from pathlib import Path
 
 import yaml
 
-from taktloop.cli_commands import _install_skill, _issuer, _orchestrator, _serve, _token, run_client
+from taktloop.cli_commands import (
+    _install_skill, _issuer, _orchestrator, _serve, _tickets, _token, run_client)
 from taktloop.config import load_config
 
 
@@ -70,6 +71,17 @@ def _parser() -> argparse.ArgumentParser:
     t.add_argument("identity")
     t.add_argument("--config", type=Path, default=argparse.SUPPRESS, help="factory.yaml; locates the credentials")
     t.add_argument("--credentials", type=Path, help="default: .taktloop/credentials next to the config")
+    tk = sub.add_parser("tickets", parents=[shared], help="the ticket stand-in: serve it or manage tickets")
+    tk = tk.add_subparsers(dest="sub", required=True)
+    ts = tk.add_parser("serve", help="run the stand-in")
+    ts.add_argument("--port", type=int, default=8767)
+    ts.add_argument("--database", type=Path, default=Path(".taktloop/tickets.db"))
+    tk.add_parser("list", parents=[shared]).add_argument("--all", action="store_true", help="include closed tickets")
+    for name in ("show", "close", "reopen", "delete"):
+        cmd = tk.add_parser(name, parents=[shared])
+        cmd.add_argument("id", type=int)
+        if name == "close":
+            cmd.add_argument("--resolution", default="")
     s = sub.add_parser("install-skill", parents=[shared], help="copy the taktloop skills into a project")
     s.add_argument("--dest", type=Path, default=Path(".claude/skills"))
     return p
@@ -83,6 +95,8 @@ def main(argv: list[str] | None = None) -> int:
         return _issuer(ns)
     if ns.cmd == "token":
         return _token(ns)
+    if ns.cmd == "tickets":
+        return _tickets(ns)
     try:
         cfg = None if (ns.url and ns.cmd not in ("serve", "orchestrator")) else load_config(ns.config)
     except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError) as e:

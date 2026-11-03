@@ -50,7 +50,7 @@ def test_issuer_imports_nothing_else_from_taktloop():
 
 
 def test_line_budget():
-    """Counted like `wc -l` over src/taktloop/**/*.py: at most 2,900 in total (M3b hard cap), 300 per module."""
+    """Counted like `wc -l` over src/taktloop/**/*.py: at most 4,300 in total (M4 hard cap), 300 per module."""
     lines = {str(p.relative_to(SRC)): len(p.read_text().splitlines()) for p in _modules()}
     assert {k: n for k, n in lines.items() if n > 300} == {}
-    assert sum(lines.values()) <= 2900, sorted(lines.items(), key=lambda kv: -kv[1])
+    assert sum(lines.values()) <= 4300, sorted(lines.items(), key=lambda kv: -kv[1])
