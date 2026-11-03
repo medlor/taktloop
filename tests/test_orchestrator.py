@@ -302,3 +302,35 @@ def test_client_refreshes_token_on_401(monkeypatch, tmp_path):
     assert seen == [("tok1", "taktloop-orchestrator"), ("tok2", "taktloop-orchestrator")]
     client.call("sweep", {})
     assert len(fetched) == 2
+
+
+def test_push_capped_after_restart_when_already_stalled(env):
+    env.launch.fail = "claude is not on PATH"
+    t, _ = push_step(env, ticks=3)  # 2 failed starts, then stalled
+    assert len(env.launch.calls) == 2 and stalls(env, t) == ["lease expired or start failed 2 times"]
+    env.orch = env.new()  # a restart tries again, at most max_lease_expiries times
+    for _ in range(5):
+        env.orch.tick()
+    assert len(env.launch.calls) == 4
+    assert stalls(env, t) == ["lease expired or start failed 2 times"]
+
+
+def test_tick_survives_unexpected_errors(env):
+    t, sha = at_verify(env)
+    env.gh.runs["task-1"] = [{"id": 5, "head_sha": sha, "status": "completed", "conclusion": "success"}]
+    fail = {"sweep", "get_step_context"}
+
+    def core(tool, args):
+        if tool in fail:
+            fail.discard(tool)
+            raise RuntimeError(f"{tool} broke")
+        return env.core(tool, args)
+
+    orch = env.new(core)
+    orch.tick()
+    assert env.log == ["sweep failed: RuntimeError: sweep broke"]
+    orch.tick()
+    assert env.log[1:] == ["verify (step 2): RuntimeError: get_step_context broke"]
+    env.clock.now += timedelta(seconds=61)
+    orch.tick()
+    assert step(env, t) == "code_review"

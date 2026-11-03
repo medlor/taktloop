@@ -12,15 +12,13 @@ from pathlib import Path
 import anyio
 
 from taktloop import headless
-from taktloop.checks import CheckUnavailable, lookup, substitute
-from taktloop.cli_commands import CoreUnreachable, TokenRejected, ToolRejected, _call_tool
+from taktloop.checks import lookup, substitute
+from taktloop.cli_commands import TokenRejected, ToolRejected, _call_tool
 from taktloop.config import FactoryConfig
 from taktloop.external import Checker, make_checker, read_dotenv
 from taktloop.models import Artifact
 from taktloop.token_client import TokenError, fetch_token
 
-FAILURES = (CoreUnreachable, TokenRejected, TokenError, ToolRejected, CheckUnavailable,
-            headless.StartFailed)
 LOST = ("not claimed", "claimed by", "claim token")  # the claim is gone: never retry with it
 
 utc_now = partial(datetime.now, timezone.utc)
@@ -56,14 +54,14 @@ class Orchestrator:
     def tick(self) -> None:
         try:
             steps = self.core("sweep", {})["steps"]
-        except FAILURES as e:
+        except Exception as e:  # noqa: BLE001 - one line per failure; the loop goes on
             return self.log(f"sweep failed: {type(e).__name__}: {e}")
         self._reap({s["step_id"]: s for s in steps})
         for s in steps:
             for act in (self._stall, self._code if s["kind"] == "code" else self._push):  # stalled: no push
                 try:
                     act(s)
-                except FAILURES as e:
+                except Exception as e:  # noqa: BLE001
                     self.log(f"{s['step']} (step {s['step_id']}): {type(e).__name__}: {e}")
 
     def _reap(self, live: dict[int, dict]) -> None:
@@ -107,7 +105,8 @@ class Orchestrator:
 
     def _push(self, s: dict) -> None:
         sid, identity = s["step_id"], s["push_identity"]
-        if s["dispatch"] != "push" or s["status"] != "open" or sid in {*self.children, *self.stalled_here}:
+        if (s["dispatch"] != "push" or s["status"] != "open" or sid in {*self.children, *self.stalled_here}
+                or s["stalled"] and self.failed[sid] >= self.o.max_lease_expiries):  # cap after a restart
             return
         shas = [a["commit"] for a in self.core("get_step_context", {"step_id": sid})["artifacts"]]
         try:
