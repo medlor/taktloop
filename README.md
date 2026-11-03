@@ -224,7 +224,10 @@ core, with its own identity (`orchestrator` in `factory.yaml`). Every
 
 Setup on top of M3a: create the two new identities with
 `uv run taktloop issuer init` (it adds the missing credentials files), restart
-the issuer, then start the three processes, each in its own terminal:
+the issuer, and re-install the bridge skill with `uv run taktloop install-skill`
+(the headless run loads `.claude/skills/taktloop/SKILL.md`). The core and the
+orchestrator read `factory.yaml` only at start, so restart both after editing it.
+Then start the three processes, each in its own terminal:
 
 ```sh
 uv run taktloop issuer
@@ -244,7 +247,12 @@ neither, the start fails and counts towards the stall rule.
 **Run logs.** Each headless run writes stdout and stderr to
 `.taktloop/runs/<step_id>-<n>.log` (gitignored); the orchestrator's own log
 line names the file. The runs use `--permission-mode dontAsk`, may read files
-and run `git diff|log|show|rev-parse`, and cannot edit or write.
+and run `git diff|log|show|rev-parse`, and cannot edit or write. They start
+with `--setting-sources project,local`, so they ignore your user-level Claude
+settings (and any allow rules in them), and they cannot read `.taktloop/` or
+`.env`. Known limit: `git diff|log|show` accept `--output=<file>`, which is
+still a write path. A running child keeps its own session, so Ctrl-C on the
+orchestrator does not kill it.
 
 Because `verify` is no longer a session step, `agent-a` and `agent-b` lost the
 `verifier` role; only `orchestrator` holds it.

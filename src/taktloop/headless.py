@@ -7,7 +7,7 @@ from pathlib import Path
 
 READ_ONLY_TOOLS = ("Read", "Grep", "Glob", "Skill", "Bash(git diff:*)", "Bash(git log:*)",
                    "Bash(git show:*)", "Bash(git rev-parse:*)", "mcp__taktloop__*")
-DENIED_TOOLS = ("Edit", "Write", "NotebookEdit")
+DENIED_TOOLS = ("Edit", "Write", "NotebookEdit", "Read(./.taktloop/**)", "Read(./.env)")
 
 
 class StartFailed(Exception):
@@ -33,7 +33,7 @@ def child_env(environ: Mapping[str, str], auth: dict | None, token: str) -> dict
 
 def command(step_id: int) -> list[str]:
     return ["claude", "-p", f"work on taktloop step {step_id}", "--permission-mode", "dontAsk",
-            "--allowedTools", *READ_ONLY_TOOLS, "--disallowedTools", *DENIED_TOOLS]
+            "--setting-sources", "project,local", "--allowedTools", *READ_ONLY_TOOLS, "--disallowedTools", *DENIED_TOOLS]
 
 
 def ensure_commits(root: Path, shas: Iterable[str], run: Callable = subprocess.run) -> None:
@@ -55,7 +55,7 @@ def start(step_id: int, token: str, root: Path, environ: Mapping[str, str],
     with log.open("wb") as out:
         try:
             proc = subprocess.Popen(command(step_id), cwd=root, env=env, stdout=out,
-                                    stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
+                                    stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True)
         except FileNotFoundError:
             raise StartFailed("claude is not on PATH") from None
     return proc, log

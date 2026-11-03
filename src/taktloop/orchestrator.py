@@ -48,8 +48,7 @@ class Orchestrator:
         self.launch, self.token_for, self.clock, self.log = launch, token_for, clock, log
         # state per step run id: claim token, first/last try, child [Popen, started, identity, seen claimed]
         self.claims, self.first_try, self.last_try, self.children = {}, {}, {}, {}
-        self.failed: Counter[int] = Counter()
-        self.stalled_here: set[int] = set()
+        self.failed, self.stalled_here = Counter(), set()
 
     def tick(self) -> None:
         try:
@@ -105,8 +104,9 @@ class Orchestrator:
 
     def _push(self, s: dict) -> None:
         sid, identity = s["step_id"], s["push_identity"]
-        if (s["dispatch"] != "push" or s["status"] != "open" or sid in {*self.children, *self.stalled_here}
-                or s["stalled"] and self.failed[sid] >= self.o.max_lease_expiries):  # cap after a restart
+        k, cap = s["lease_expiries"] + self.failed[sid], self.o.max_lease_expiries
+        if (s["dispatch"] != "push" or s["status"] != "open" or sid in self.children
+                or k >= cap and (sid in self.stalled_here or self.failed[sid] >= cap)):  # rule 2 stops pushes
             return
         shas = [a["commit"] for a in self.core("get_step_context", {"step_id": sid})["artifacts"]]
         try:

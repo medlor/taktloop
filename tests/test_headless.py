@@ -49,6 +49,8 @@ def test_command_is_read_only():
     assert cmd[cmd.index("--permission-mode") + 1] == "dontAsk"
     split = cmd.index("--disallowedTools")
     assert "Edit" in cmd[split:] and "Edit" not in cmd[:split]
+    assert cmd[cmd.index("--setting-sources") + 1] == "project,local"
+    assert "Read(./.taktloop/**)" in cmd[split:] and "Read(./.env)" in cmd[split:]
 
 
 def test_ensure_commits_fetches_once_when_missing(tmp_path):

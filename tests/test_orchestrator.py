@@ -315,6 +315,17 @@ def test_push_capped_after_restart_when_already_stalled(env):
     assert stalls(env, t) == ["lease expired or start failed 2 times"]
 
 
+def test_push_after_rule_1_stall(env):
+    t, _ = at_verify(env)
+    env.gh.runs["task-1"] = [{"id": 5, "head_sha": _, "status": "completed", "conclusion": "success"}]
+    env.orch.tick()
+    assert step(env, t) == "code_review"
+    env.clock.now += timedelta(minutes=61)
+    env.orch.tick()
+    assert stalls(env, t) == ["nobody picked it up for 60 min"]
+    assert len(env.launch.calls) == 1
+
+
 def test_tick_survives_unexpected_errors(env):
     t, sha = at_verify(env)
     env.gh.runs["task-1"] = [{"id": 5, "head_sha": sha, "status": "completed", "conclusion": "success"}]
