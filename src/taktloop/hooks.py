@@ -42,15 +42,17 @@ def parse_hooks(data: Any, servers: Collection[str]) -> list[Hook]:
             raise ValueError(f"hook {name}: unknown key {unknown[0]!r}")
         if name in {h.name for h in out}:
             raise ValueError(f"duplicate hook name {name!r}")
-        if ("call" in raw) == ("command" in raw) or "command" in raw and not isinstance(raw["command"], str):
+        if ("call" in raw) == ("command" in raw):
             raise ValueError(f"hook {name}: needs exactly one of call or command")
-        if call is not None:
+        if "command" in raw and not (isinstance(raw["command"], str) and shlex.split(raw["command"])):
+            raise ValueError(f"hook {name}: command must be a non-empty command line")
+        if "call" in raw:
             _server_tool(call, f"hook {name}: call", ("mcp_server", "tool", "args"))
             if call["mcp_server"] not in servers:
                 raise ValueError(f"hook {name}: unknown mcp_server {call['mcp_server']!r}")
             call = (call["mcp_server"], call["tool"], _args(call.get("args"), "call"))
-        if mapping is not None and not isinstance(mapping, dict):
-            raise ValueError(f"hook {name}: map must be a mapping")
+        if mapping is not None and not isinstance(mapping, dict) or not isinstance(raw.get("step", ""), str):
+            raise ValueError(f"hook {name}: map must be a mapping, step a string")
         out.append(Hook(name, str(raw["on"]), raw.get("step"), mapping and {str(k): str(v) for k, v in mapping.items()},
                         call, raw.get("command")))
     return out
@@ -64,8 +66,8 @@ def run_command(command: str, payload: dict, cwd: Path, environ: Mapping[str, st
                               capture_output=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         raise HookFailed(f"timed out after {timeout:g} s") from None
-    except OSError as e:
-        raise HookFailed(f"cannot run {command}: {e.strerror}") from None
+    except (OSError, ValueError, IndexError) as e:  # IndexError: an empty command line
+        raise HookFailed(f"cannot run {command!r}: {type(e).__name__}") from None
     if done.returncode:
         raise HookFailed(f"exit {done.returncode}")
 
@@ -89,6 +91,8 @@ class HookRunner:
             self.log(f"hooks.yaml refused: {' '.join(str(e).split())}; keeping the previous hooks")
 
     def tick(self, list_events: Callable[[int], dict], unavailable: Callable[[str], bool]) -> None:
+        if not self.hooks:
+            return
         cursors = json.loads(self.cursor_path.read_text()) if self.cursor_path.exists() else {}
         events, after = [], min((cursors[h.name] for h in self.hooks if h.name in cursors), default=0)
         while page := list_events(after)["events"]:  # a new hook needs the newest id, so read to the end

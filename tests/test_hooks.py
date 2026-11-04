@@ -67,6 +67,11 @@ def runner(tmp_path):
     ({"name": "a", "on": "x", "command": "c", "call": {"mcp_server": "tickets", "tool": "t"}},
      "exactly one of call or command"),
     ({"name": "a", "on": "x", "call": {"mcp_server": "jira", "tool": "t"}}, "unknown mcp_server 'jira'"),
+    ({"name": "a", "on": "x", "call": None}, "call must be a mapping"),
+    ({"name": "a", "on": "x", "command": ""}, "command must be a non-empty command line"),
+    ({"name": "a", "on": "x", "command": 3}, "command must be a non-empty command line"),
+    ({"name": "a", "on": "x", "command": './x "q'}, "closing quotation"),
+    ({"name": "a", "on": "x", "step": 3, "command": "c"}, "step a string"),
 ])
 def test_parse_hooks_refusals(hook, error):
     with pytest.raises(ValueError, match=error):
@@ -193,3 +198,21 @@ def test_command_hook_gets_json_without_tokens(tmp_path):
         run_command(f"{sys.executable} hook.py", {}, tmp_path, {**environ, "EXIT": "3"}, [])
     with pytest.raises(HookFailed, match="timed out after 0.2 s"):
         run_command(f"{sys.executable} -c 'import time; time.sleep(5)'", {}, tmp_path, environ, [], timeout=0.2)
+
+
+def test_no_hooks_reads_no_events(runner):
+    for _ in range(5):
+        runner.feed.add("step_opened", step="design", values=VALUES)
+    runner.path.write_text("hooks: []")
+    os.utime(runner.path, ns=(1, 1))
+    runner.r.reload()
+    reads = []
+    for _ in range(3):
+        runner.r.tick(lambda after: reads.append(after) or runner.feed(after), lambda s: False)
+    assert reads == []
+
+
+def test_run_command_turns_bad_command_into_hook_failed(tmp_path):
+    for bad in ("", './x "q', "/nonexistent/hook"):
+        with pytest.raises(HookFailed, match="cannot run"):
+            run_command(bad, {}, tmp_path, {}, [])

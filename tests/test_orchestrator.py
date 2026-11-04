@@ -7,7 +7,9 @@ from taktloop import orchestrator
 from taktloop.checks import CheckDecl
 from taktloop.cli_commands import CoreUnreachable, TokenRejected, ToolRejected
 from taktloop.config import FactoryConfig, OrchestratorConfig, SyncConfig
+from taktloop.availability import Availability
 from taktloop.headless import StartFailed
+from taktloop.hooks import Hook
 from taktloop.models import ArtifactIn
 from taktloop.orchestrator import CoreClient, Orchestrator
 from taktloop.service import Caller, Rejected, Service
@@ -444,3 +446,33 @@ def test_code_step_waits_while_server_unavailable(env):
     down.servers = {}
     orch.tick()
     assert step(env, t) == "code_review" and hooks.ticks[1][1:] == (False, False)
+
+
+def test_held_code_step_keeps_its_claim_while_server_unavailable(env):
+    t, sha = at_verify(env)
+    env.gh.runs["task-1"] = [{"id": 5, "head_sha": sha, "status": "in_progress", "conclusion": None}]
+    down = Down()
+    orch = env.new(avail=down)
+    orch.tick()  # claimed and tried once
+    down.servers = {"github": "unreachable"}
+    for _ in range(10):
+        env.clock.now += timedelta(minutes=5)
+        orch.tick()
+    history = env.svc.get_task(REQ, t.id).history
+    assert "lease_expired" not in [ev.operation for ev in history] and len(env.gh.calls) == 1
+    assert env.svc.sweep(ORCH)[0].claimed_by == "orchestrator"
+
+
+def test_hook_tools_checked_on_the_first_tick(env):
+    class Reloading(Hooks):
+        hooks = []
+
+        def reload(self):
+            self.hooks = [Hook("s", "step_opened", call=("tickets", "update_status", {}))]
+
+    hooks = Reloading()
+    orch = env.new(hooks=hooks)
+    orch.avail = Availability(lambda server: {"tickets": {"create_ticket"}}.get(server, {"actions_list"}), orch.needed)
+    orch.tick()
+    assert hooks.ticks[0][2] is True
+    assert env.log == ["not available: tickets missing tool update_status"]

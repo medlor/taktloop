@@ -62,7 +62,7 @@ class Orchestrator:
             steps = self.core("sweep", {})["steps"]
         except Exception as e:  # noqa: BLE001 - one line per failure; the loop goes on
             return self.log(f"sweep failed: {type(e).__name__}: {e}")
-        self._guard("availability check", self._availability)
+        self._guard("availability check", lambda: (self.hooks and self.hooks.reload(), self._availability()))
         self._reap({s["step_id"]: s for s in steps})
         for s in steps:
             for act in (self._stall, self._code if s["kind"] == "code" else self._push):  # stalled: no push
@@ -71,8 +71,8 @@ class Orchestrator:
                 except Exception as e:  # noqa: BLE001
                     self.log(f"{s['step']} (step {s['step_id']}): {type(e).__name__}: {e}")
         if self.hooks:
-            self._guard("hooks", lambda: (self.hooks.reload(), self.hooks.tick(
-                lambda after: self.core("list_events", {"after_id": after}), self.down.__contains__)))
+            self._guard("hooks", lambda: self.hooks.tick(
+                lambda after: self.core("list_events", {"after_id": after}), self.down.__contains__))
         if self.cfg.sync:
             self._guard("sync", self._sync)
 
@@ -98,10 +98,8 @@ class Orchestrator:
 
     def needed(self) -> dict[str, set[str]]:
         """server -> tools the live workflow's code steps and the hooks call."""
-        extra: dict[str, set[str]] = {}
-        for h in self.hooks.hooks if self.hooks else []:
-            if h.call:
-                extra.setdefault(h.call[0], set()).add(h.call[1])
+        calls = [h.call for h in self.hooks.hooks if h.call] if self.hooks else []
+        extra = {server: {t for s, t, _ in calls if s == server} for server, _, _ in calls}
         return needed_tools(self._workflow(), ("call",), extra=extra)
 
     def _sync(self) -> None:
@@ -125,8 +123,10 @@ class Orchestrator:
     def _code(self, s: dict) -> None:
         sid, now = s["step_id"], self.clock()
         call = self._workflow(s["workflow_version"]).step(s["step"]).call
-        if call.mcp_server in self.down:
-            return  # waits for the server (re-checked once a minute)
+        if call.mcp_server in self.down:  # wait for the server (re-checked once a minute), keeping our claim
+            if s["claimed_by"] == self.o.identity and sid in self.claims:
+                self.core("heartbeat", {"step_id": sid, "claim_token": self.claims[sid]})
+            return
         if s["status"] == "open":
             self.claims[sid] = self.core("claim_step", {"step_id": sid})["claim_token"]
             self.first_try.setdefault(sid, now)
