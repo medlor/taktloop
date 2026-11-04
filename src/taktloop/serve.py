@@ -14,7 +14,8 @@ from taktloop.auth import JwtVerifier
 from taktloop.availability import Availability, needed_tools
 from taktloop.config import FactoryConfig
 from taktloop.external import Checker, credential, make_checker, make_tool_lister, read_dotenv
-from taktloop.mcp_server import build_server
+from taktloop.http_api import routes
+from taktloop.mcp_server import build_server, operations
 from taktloop.service import Service
 from taktloop.store import Store
 from taktloop.workflow import WorkflowError
@@ -95,6 +96,7 @@ def run(cfg: FactoryConfig) -> None:
     service = prepare(cfg)
     verifier = JwtVerifier(cfg.auth_issuer, cfg.auth_audience)
     app = build_server(service, cfg.factory, verifier, cfg.url).streamable_http_app(host=cfg.host)
+    app.routes.extend(routes(operations(service, cfg.factory), cfg.factory, verifier))
     print(f"taktloop core for factory '{cfg.factory}' on {cfg.url}", flush=True)
     serve_app(app, cfg.host, cfg.port)
 
