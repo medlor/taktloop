@@ -54,3 +54,38 @@ def test_unknown_operation_404(api):
 def test_bad_arguments_422(api):
     assert api("get_task", {"task_id": "x"}).status_code == 422
     assert api("get_task", {}).status_code == 422
+
+
+def test_validation_reason_names_the_field(api):
+    reason = api("get_task", {"task_id": "x"}).json()["reason"]
+    assert "task_id" in reason and "operations" not in reason
+    assert api("get_task", {"task_id": 1, "bogus": 1}).json()["reason"].startswith("bogus")
+
+
+def test_bad_json_and_non_object_body_422(api):
+    client = TestClient(Starlette(routes=routes({"list_tasks": lambda caller: None}, "taktloop", FakeVerifier())))
+    h = {"Authorization": "Bearer good"}
+    assert client.post("/api/list_tasks", content=b"{", headers=h).json() == {"reason": "body is not valid JSON"}
+    assert client.post("/api/list_tasks", json=[1], headers=h).json() == {"reason": "body must be a JSON object"}
+
+
+def test_service_bug_is_500_not_422():
+    def boom(caller):
+        raise ValueError("internal")
+    client = TestClient(Starlette(routes=routes({"boom": boom}, "taktloop", FakeVerifier())),
+                        raise_server_exceptions=False)
+    assert client.post("/api/boom", headers={"Authorization": "Bearer good"}).status_code == 500
+
+
+def test_operation_runs_off_the_event_loop():
+    import anyio
+    from taktloop.models import TaskList
+
+    async def nothing():
+        return None
+
+    def probe(caller):
+        anyio.run(nothing)  # what checks do: fails on the event loop thread
+        return TaskList(tasks=[])
+    client = TestClient(Starlette(routes=routes({"probe": probe}, "taktloop", FakeVerifier())))
+    assert client.post("/api/probe", headers={"Authorization": "Bearer good"}).status_code == 200
