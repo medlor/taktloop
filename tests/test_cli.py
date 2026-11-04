@@ -637,3 +637,39 @@ def test_up_stops_when_a_child_exits(tmp_path, capsys):
     captured = capsys.readouterr()
     assert "issuer| taktloop:" in captured.out and "dev-issuer.yaml" in captured.out
     assert "taktloop: issuer exited (2); stopping all" in captured.err
+
+
+def test_up_refuses_a_port_in_use(tmp_path, capsys):
+    import socket
+
+    with socket.socket() as busy:
+        busy.bind(("127.0.0.1", 0))
+        busy.listen()
+        port = busy.getsockname()[1]
+        cfg = write_factory(tmp_path, {"auth": {**AUTH, "issuer": f"http://127.0.0.1:{port}"}}, ONLY)
+        assert cli.main(["--config", str(cfg), "up"]) == 2
+    out = capsys.readouterr()
+    assert out.err == f"taktloop: issuer port {port} is already in use (another factory running?)\n"
+    assert "issuer|" not in out.out  # nothing was started
+
+
+def test_init_and_connect_without_templates(tmp_path, monkeypatch, capsys):
+    from taktloop import cli_setup
+
+    monkeypatch.setattr(cli_setup, "TEMPLATES", tmp_path / "missing")
+    assert cli.main(["init", str(tmp_path / "f"), "--repo", "a/b", "--checkout", str(tmp_path)]) == 2
+    assert "uv tool install --editable" in capsys.readouterr().err and not (tmp_path / "f").exists()
+    assert cli.main(["connect", "http://127.0.0.1:8765/mcp", "--dest", str(tmp_path)]) == 2
+    assert "uv tool install --editable" in capsys.readouterr().err and not (tmp_path / ".mcp.json").exists()
+
+
+def test_init_refuses_a_missing_checkout(tmp_path, capsys):
+    assert cli.main(["init", str(tmp_path / "f"), "--repo", "a/b", "--checkout", str(tmp_path / "nope")]) == 2
+    assert "nope" in capsys.readouterr().err and not (tmp_path / "f").exists()
+
+
+def test_connect_refuses_mcp_servers_that_is_not_an_object(tmp_path, capsys):
+    (tmp_path / ".mcp.json").write_text('{"mcpServers": []}')
+    assert cli.main(["connect", "http://127.0.0.1:8765/mcp", "--dest", str(tmp_path)]) == 2
+    err = capsys.readouterr().err
+    assert err.startswith("taktloop: ") and ".mcp.json" in err and err.count("\n") == 1

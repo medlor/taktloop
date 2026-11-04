@@ -31,7 +31,9 @@ It does two things, and you commit both:
   ```
 
 The headless runs the orchestrator starts (triage, code review) use the same
-`.mcp.json` and skills, so connect before the first task. Run `connect` again
+`.mcp.json` and skills, so connect before the first task. The `verify` gate
+needs a GitHub Actions workflow at `.github/workflows/ci.yml` in your repo
+that runs on pushes to the task branches (`taktloop/<id>-<name>`). Run `connect` again
 after updating taktloop to refresh the skills.
 
 ## 2. Start a session
@@ -57,7 +59,8 @@ review and approve with another identity than the one that did the work.
 
 Accept the project's `.mcp.json` servers when Claude Code asks. Tokens last 12
 hours. To read tickets in a session too, also set `TAKTLOOP_TICKETS_TOKEN`
-(from the factory's `.env`).
+(from the factory's `.env`). Without it, Claude Code warns about a missing
+environment variable for the `tickets` server; that is expected and harmless.
 
 ## 3. When it doesn't connect
 

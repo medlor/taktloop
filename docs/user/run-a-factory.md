@@ -15,10 +15,19 @@ auth status`) for the headless runs (triage and code review).
 ```sh
 git clone https://github.com/medlor/taktloop.git
 uv tool install --editable ./taktloop      # puts `taktloop` on your PATH
+cd taktloop                                # here taktloop builds itself: the clone is also the product repo
 ```
 
 Install it **editable**: `taktloop init` and `taktloop connect` copy the
-templates and skills from the checkout (`templates/mvp`).
+templates and skills from the checkout (`templates/mvp`); without them they
+refuse with a hint. The commands below run in the **product repo's
+checkout** (for another product: `cd` into its checkout instead) unless they
+say `cd ../taktloop-factory`.
+
+The product repo needs a GitHub Actions workflow at
+`.github/workflows/ci.yml` that runs on pushes to the task branches
+(`taktloop/<id>-<name>`): the `verify` gate waits for its run on the change
+commit and needs it green.
 
 ## 2. Create the factory directory
 
@@ -28,17 +37,18 @@ taktloop init ../taktloop-factory --repo medlor/taktloop --checkout .
 
 - `--repo` is the product repository on GitHub (`OWNER/REPO`); the CI gate
   looks up its Actions runs.
-- `--checkout` is the product repository's local checkout. Headless runs
-  start there, so it must have been connected (step 6). It is stored relative
-  to the factory directory (`product: {checkout: ../taktloop}`).
+- `--checkout` is the product repository's local checkout (here `.`, the
+  clone). Headless runs start there, so it must be connected (§5) before the
+  first task. It is stored relative to the factory directory (`product:
+  {checkout: ../taktloop}`).
 
 `init` refuses a directory that isn't empty. It writes:
 
 | File | What it is |
 | --- | --- |
 | `factory.yaml` | the factory's config, hand-maintained; the core never writes it ([reference](workflow-reference.md#factoryyaml)) |
-| `workflow.yaml` | the workflow, written **only by the core** from now on (§5) |
-| `hooks.yaml` | the hooks, re-read on change (§6) |
+| `workflow.yaml` | the workflow, written **only by the core** from now on (§7) |
+| `hooks.yaml` | the hooks, re-read on change (§8) |
 | `dev-issuer.yaml` | the identities and their roles, for the dev token issuer |
 | `.env` | `TAKTLOOP_TICKETS_TOKEN` (random) and an empty `TAKTLOOP_GITHUB_TOKEN=` (gitignored) |
 | `.gitignore` | `.env` and `.taktloop/` |
@@ -70,7 +80,7 @@ logs or hooks.
 
 ```sh
 cd ../taktloop-factory
-taktloop up
+taktloop up                                # stays in the foreground
 ```
 
 `up` starts four processes and prefixes each output line with its name:
@@ -103,9 +113,26 @@ While a server is missing (not running, no token, a tool it lacks), the core
 refuses `task create` naming it, and the orchestrator waits with the steps
 and hooks that need it.
 
-## 5. Day to day
+Leave `up` running in this terminal and use a **second terminal** for
+everything below.
 
-Run the CLI in the factory directory (or add `--config <dir>/factory.yaml`).
+## 5. Connect the product repo
+
+In the product repo's checkout (here the taktloop clone), before the first
+task:
+
+```sh
+taktloop connect http://127.0.0.1:8765/mcp --tickets-url http://127.0.0.1:8767/mcp
+```
+
+It installs the skills into `.claude/skills/` and the servers into
+`.mcp.json`; commit both. Sessions and the headless runs use them. Details,
+identities and troubleshooting: [connect-your-repo.md](connect-your-repo.md).
+
+## 6. Day to day
+
+Run the CLI in the factory directory (`cd ../taktloop-factory`), or add
+`--config ../taktloop-factory/factory.yaml`.
 It acts as `cli.identity` from `factory.yaml` (`tobias`), or `--as
 <identity>`, or the token in `TAKTLOOP_TOKEN`.
 
@@ -150,7 +177,7 @@ curl -s -X POST localhost:8765/api/create_task -H "Authorization: Bearer $TOKEN"
 curl -s -X POST localhost:8765/api/get_task -H "Authorization: Bearer $TOKEN" -d '{"task_id": 1}'
 ```
 
-## 6. Change the workflow while it runs
+## 7. Change the workflow while it runs
 
 `workflow.yaml` changes only through the core, against a **draft**, with
 instant feedback. Tasks already running finish on the version they started
@@ -183,7 +210,7 @@ the next version; invalid → the core refuses to start and names the problem.
 
 Format: [workflow-reference.md](workflow-reference.md).
 
-## 7. Hooks
+## 8. Hooks
 
 `hooks.yaml` turns core events into one MCP call (or one command) each,
 fired by the orchestrator. The template keeps the ticket in line: its status
@@ -200,7 +227,7 @@ attempts in all, then given up with a line in the log and in
 waits and catches up in order. A new hook starts at the newest event (no
 replay). Format: [workflow-reference.md](workflow-reference.md#hooks).
 
-## 8. Known limits (MVP)
+## 9. Known limits (MVP)
 
 - **The dev issuer is for development.** All credentials files, including the
   approver's, sit in `.taktloop/credentials/`. A session that can run shell
@@ -225,14 +252,14 @@ replay). Format: [workflow-reference.md](workflow-reference.md#hooks).
 - **No migrations.** A database from an older version is refused at start:
   delete `.taktloop/factory.db` and start again.
 
-## 9. Lightweight budget (PRD §5)
+## 10. Lightweight budget (PRD §5)
 
 Measured at the end of M4:
 
 | Criterion | Target | Measured |
 | --- | --- | --- |
 | Components | fewer than 10 | 6: core (MCP server, HTTP API, SQLite store), orchestrator, ticket stand-in, dev issuer, CLI, skills (bridge, triage, plan review, breakout) |
-| Code size | at most ~4,300 lines under `src/` | 4,191 lines (`wc -l` over every `.py` file under `src/`) |
+| Code size | at most ~4,300 lines under `src/` | 4,206 lines (`wc -l` over every `.py` file under `src/`) |
 | Dependencies | at most ~10 runtime dependencies | 3 direct: `mcp`, `pyyaml`, `pyjwt[crypto]` |
 | Runtime | the core is one process with one SQLite file | 4 processes with `taktloop up` (issuer, tickets, core, orchestrator); the core has one SQLite file, the stand-in its own |
 | Setup | a new factory in under 30 minutes | _to be timed by @Tobias, following only these docs_ |

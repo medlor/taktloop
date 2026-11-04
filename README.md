@@ -13,13 +13,21 @@ plain HTTP API); taktloop has no agent loop and no tracker of its own.
 A factory runs in its own directory (the service side); your product repo
 connects to it (the team side).
 
+Install once, from a clone of this repo: `uv tool install --editable
+./taktloop`. Then, in your product repo's checkout (it needs a
+`.github/workflows/ci.yml` that runs on pushed branches):
+
 ```sh
-uv tool install --editable ./taktloop                    # from a clone of this repo
-taktloop init ../my-factory --repo OWNER/REPO --checkout .   # in your product repo's checkout
+taktloop init ../my-factory --repo OWNER/REPO --checkout .
 # put a read-only GitHub token after TAKTLOOP_GITHUB_TOKEN= in ../my-factory/.env
-(cd ../my-factory && taktloop up)                        # issuer, tickets, core, orchestrator; Ctrl-C stops
+(cd ../my-factory && taktloop up)    # issuer, tickets, core, orchestrator; blocks until Ctrl-C
+```
+
+In a second terminal, again in the product repo's checkout:
+
+```sh
 taktloop connect http://127.0.0.1:8765/mcp --tickets-url http://127.0.0.1:8767/mcp   # skills + .mcp.json
-(cd ../my-factory && taktloop task create "Add a --version flag")
+taktloop --config ../my-factory/factory.yaml task create "Add a --version flag"
 TAKTLOOP_TOKEN=$(taktloop token agent-a --config ../my-factory/factory.yaml) claude   # say "work on taktloop"
 ```
 

@@ -27,6 +27,10 @@ def _init(ns) -> int:
         return _fail("taktloop: --repo must be OWNER/REPO")
     if d.exists() and (not d.is_dir() or any(d.iterdir())):
         return _fail(f"taktloop: {d} is not empty")
+    if not ns.checkout.is_dir():
+        return _fail(f"taktloop: --checkout {ns.checkout} is not a directory")
+    if not (TEMPLATES / "mvp").is_dir():
+        return _fail(f"taktloop: no templates at {TEMPLATES}; install with `uv tool install --editable <clone>`")
     d.mkdir(parents=True, exist_ok=True)
     checkout = os.path.relpath(ns.checkout.resolve(), d.resolve())
     for name in FILES:
@@ -52,6 +56,14 @@ def _port(url: str) -> tuple[str, int]:
     return parts.hostname or "127.0.0.1", parts.port or (443 if parts.scheme == "https" else 80)
 
 
+def _listening(addr: tuple[str, int]) -> bool:
+    try:
+        socket.create_connection(addr, timeout=0.5).close()
+        return True
+    except OSError:
+        return False
+
+
 def _relay(name: str, stream) -> None:
     for line in stream:
         print(f"{name}| {line}", end="", flush=True)
@@ -71,7 +83,7 @@ def _stop(procs: list[subprocess.Popen]) -> None:
 
 
 def _up(ns) -> int:
-    """Issuer, ticket stand-in, core and orchestrator as child processes, until Ctrl-C or one exits."""
+    """Issuer, tickets, core and orchestrator as child processes, until Ctrl-C/SIGTERM/SIGHUP or one exits."""
     try:
         cfg = load_config(ns.config)
     except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError) as e:
@@ -83,23 +95,21 @@ def _up(ns) -> int:
               if tickets else []),
             ("core", ["--config", config, "serve"], (cfg.host, cfg.port)),
             ("orch", ["--config", config, "orchestrator"], None)]
-    procs: list[subprocess.Popen] = []
-    relays: list[threading.Thread] = []
+    procs, relays = [], []
+    old = {sig: signal.signal(sig, signal.default_int_handler) for sig in (signal.SIGTERM, signal.SIGHUP)}
     try:
         for name, args, addr in plan:
+            if addr and _listening(addr):
+                return _fail(f"taktloop: {name} port {addr[1]} is already in use (another factory running?)")
             p = subprocess.Popen([sys.executable, "-m", "taktloop.cli", *args], cwd=cfg.root,
                                  env={**os.environ, "PYTHONUNBUFFERED": "1"}, text=True, stdout=subprocess.PIPE,
                                  stderr=subprocess.STDOUT, start_new_session=True)  # Ctrl-C reaches only `up`
             procs.append(p)
-            relays.append(threading.Thread(target=_relay, args=(name, p.stdout), daemon=True))
-            relays[-1].start()
+            (relay := threading.Thread(target=_relay, args=(name, p.stdout), daemon=True)).start()
+            relays.append(relay)
             deadline = time.monotonic() + 10
-            while addr and p.poll() is None and time.monotonic() < deadline:
-                try:
-                    socket.create_connection(addr, timeout=0.5).close()
-                    break
-                except OSError:
-                    time.sleep(0.2)
+            while addr and p.poll() is None and time.monotonic() < deadline and not _listening(addr):
+                time.sleep(0.2)
             if p.poll() is not None:
                 break
         while not (gone := [(n, p.returncode) for (n, *_), p in zip(plan, procs) if p.poll() is not None]):
@@ -110,8 +120,10 @@ def _up(ns) -> int:
         return 0
     finally:
         _stop(procs)
-        for t in relays:
-            t.join(timeout=1)
+        for sig, handler in old.items():
+            signal.signal(sig, handler)
+        for relay in relays:
+            relay.join(timeout=1)
 
 
 def _connect(ns) -> int:
@@ -120,9 +132,12 @@ def _connect(ns) -> int:
     if bad := [u for u, _ in urls.values() if u is not None and not _valid_url(u)]:
         return _fail(f"taktloop: invalid URL {bad[0]}")
     path = ns.dest / ".mcp.json"
+    if not (TEMPLATES / "mvp").is_dir():
+        return _fail(f"taktloop: no templates at {TEMPLATES}; install with `uv tool install --editable <clone>`")
     try:
         data = json.loads(path.read_text()) if path.exists() else {}
-        servers = data.setdefault("mcpServers", {})
+        if not isinstance(servers := data.setdefault("mcpServers", {}), dict):
+            raise ValueError("mcpServers is not an object")
     except (ValueError, AttributeError) as e:
         return _fail(f"taktloop: {path} is not a JSON object with mcpServers: {e}")
     for name, (url, env) in urls.items():

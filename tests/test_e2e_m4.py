@@ -108,4 +108,36 @@ def test_m4_setup_split(tmp_path, monkeypatch, capsys, fake_github):
     for prefix in ("issuer|", "tickets|", "core|", "orch|"):
         assert prefix in text, prefix
     assert not any(_listening(p) for p in (issuer, core, tickets)), text
-    assert "fake-gh" not in text and "TAKTLOOP_TICKETS_TOKEN=" not in text
+    secret = dict(line.split("=", 1) for line in dotenv.read_text().splitlines())["TAKTLOOP_TICKETS_TOKEN"]
+    assert "fake-gh" not in text and secret not in text
+
+
+def test_up_stops_its_children_on_sigterm(tmp_path):
+    """Ended by SIGTERM (or SIGHUP) rather than Ctrl-C, `up` still stops every child."""
+    issuer, core = _free_port(), _free_port()
+    (tmp_path / "dev-issuer.yaml").write_text(
+        f"issuer: http://127.0.0.1:{issuer}\naudience: taktloop\nstate_dir: state\n"
+        "identities:\n  orchestrator: {scopes: [taktloop:taktloop:orchestrator]}\n")
+    (tmp_path / "workflow.yaml").write_text(
+        "start: only\nsteps:\n  only: {kind: agent, role: planner, skill: s, output: {artifacts: [doc]}, next: done}\n")
+    cfg = tmp_path / "factory.yaml"
+    cfg.write_text(f"server: {{port: {core}}}\nauth: {{issuer: 'http://127.0.0.1:{issuer}', audience: taktloop}}\n"
+                   "orchestrator: {identity: orchestrator, tick_seconds: 1}\n")
+    assert main(["issuer", "init", "--config", str(tmp_path / "dev-issuer.yaml")]) == 0
+    log = tmp_path / "up.log"
+    with open(log, "w") as out:
+        up = subprocess.Popen([sys.executable, "-m", "taktloop.cli", "--config", str(cfg), "up"], cwd=tmp_path,
+                              stdout=out, stderr=subprocess.STDOUT, start_new_session=True)
+    try:
+        _until(lambda: "orch|" in log.read_text(), 40, "orchestrator", log)
+        children = subprocess.run(["pgrep", "-P", str(up.pid)], capture_output=True, text=True).stdout.split()
+        assert len(children) == 3, children
+        up.terminate()
+        up.wait(timeout=20)
+    finally:
+        if up.poll() is None:
+            os.killpg(up.pid, signal.SIGKILL)
+    alive = [pid for pid in children if subprocess.run(["kill", "-0", pid], capture_output=True).returncode == 0]
+    for pid in alive:  # don't leave orphans behind when the test fails
+        os.kill(int(pid), signal.SIGKILL)
+    assert alive == [], log.read_text()
