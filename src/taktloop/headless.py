@@ -44,10 +44,11 @@ def ensure_commits(root: Path, shas: Iterable[str], run: Callable = subprocess.r
 
 
 def start(step_id: int, token: str, root: Path, environ: Mapping[str, str],
-          shas: Iterable[str]) -> tuple[subprocess.Popen, Path]:
+          shas: Iterable[str], runs: Path | None = None) -> tuple[subprocess.Popen, Path]:
+    """Run in `root` (the product checkout); the log goes to `runs` (default: root/.taktloop/runs)."""
     ensure_commits(root, shas)
     env = child_env(environ, claude_auth(), token)
-    runs = root / ".taktloop" / "runs"
+    runs = runs or root / ".taktloop" / "runs"
     runs.mkdir(parents=True, exist_ok=True)
     n = 1
     while (log := runs / f"{step_id}-{n}.log").exists():

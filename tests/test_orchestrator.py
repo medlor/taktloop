@@ -4,8 +4,9 @@ from pathlib import Path
 import pytest
 
 from taktloop import orchestrator
+from taktloop.checks import CheckDecl
 from taktloop.cli_commands import CoreUnreachable, TokenRejected, ToolRejected
-from taktloop.config import FactoryConfig, OrchestratorConfig
+from taktloop.config import FactoryConfig, OrchestratorConfig, SyncConfig
 from taktloop.headless import StartFailed
 from taktloop.models import ArtifactIn
 from taktloop.orchestrator import CoreClient, Orchestrator
@@ -46,8 +47,12 @@ class GitHub:
     def __init__(self):
         self.runs: dict[str, list[dict]] = {}
         self.calls: list[tuple[str, dict]] = []
+        self.tickets: list[tuple[str, dict]] = []  # calls to the fake tickets server
 
     def __call__(self, server, tool, args):
+        if server == "tickets":
+            self.tickets.append((tool, args))
+            return {"id": 4, "title": args.get("title"), "closed": False}
         if tool == "actions_get":
             run = next(r for rs in self.runs.values() for r in rs if str(r["id"]) == args["resource_id"])
             return {"workflow_run": dict(run)}
@@ -82,27 +87,34 @@ class Launcher:
 @pytest.fixture
 def env(store, clock):
     gh, launch, log = GitHub(), Launcher(), []
-    svc = Service(store, parse_workflow(WORKFLOW), lease=timedelta(minutes=30), clock=clock, checker=gh)
+    svc = Service(store, parse_workflow(WORKFLOW), lease=timedelta(minutes=30), clock=clock, checker=gh,
+                  servers=("github", "tickets"))
+    calls = []
 
     def core(tool, args):
+        calls.append((tool, args))
         extra = {"outcome": "completed", "artifacts": []} if tool == "complete_step" else {}
         try:
             result = getattr(svc, tool)(ORCH, **extra, **args)
         except Rejected as e:
             raise ToolRejected(str(e)) from None
-        if tool == "sweep":
-            return {"steps": [s.model_dump(mode="json") for s in result]}
+        if tool in ("sweep", "list_tasks"):
+            return {{"sweep": "steps", "list_tasks": "tasks"}[tool]: [s.model_dump(mode="json") for s in result]}
         return result.model_dump(mode="json")
 
+    sync = {"ticket": SyncConfig(CheckDecl("tickets", "get_ticket", {"id": "{{evidence.open_ticket.ticket}}"},
+                                           {}, {"closed": "False"}), every_minutes=5)}
     cfg = FactoryConfig("taktloop", "127.0.0.1", 8765, Path("db"), parse_workflow(WORKFLOW), 30,
-                        "http://i", "taktloop", orchestrator=OrchestratorConfig("orchestrator"))
+                        "http://i", "taktloop", orchestrator=OrchestratorConfig("orchestrator"), sync=sync)
 
     class Env:
         pass
 
     e = Env()
     e.svc, e.gh, e.launch, e.log, e.clock, e.core, e.cfg = svc, gh, launch, log, clock, core, cfg
-    e.new = lambda core=core: Orchestrator(cfg, core, gh, launch, lambda i: f"token-{i}", clock, log.append)
+    e.calls = calls
+    e.new = lambda core=core, **kw: Orchestrator(cfg, core, gh, launch, lambda i: f"token-{i}", clock,
+                                                 log.append, **kw)
     e.orch = e.new()
     return e
 
@@ -345,3 +357,90 @@ def test_tick_survives_unexpected_errors(env):
     env.clock.now += timedelta(seconds=61)
     orch.tick()
     assert step(env, t) == "code_review"
+
+
+def approve(e, **steps):
+    """Make a v2 with these steps put into the draft (and `start` set, if given)."""
+    start = steps.pop("start", None)
+    for name, definition in steps.items():
+        e.svc.put_step(REQ, name, definition)
+    if start:
+        e.svc.set_start(REQ, start)
+    return e.svc.approve_workflow(REQ, e.svc.live_version).version
+
+
+OPEN_TICKET = {"kind": "code", "role": "verifier", "next": "build",
+               "call": {"mcp_server": "tickets", "tool": "create_ticket",
+                        "args": {"title": "{{task.title}}", "body": "task {{task.id}}"}, "evidence": {"ticket": "id"}}}
+
+
+def test_orchestrator_runs_open_ticket_with_task_values(env):
+    approve(env, open_ticket=OPEN_TICKET, start="open_ticket")
+    t = env.svc.create_task(REQ, "T1")
+    env.orch.tick()
+    assert env.gh.tickets[0] == ("create_ticket", {"title": "T1", "body": f"task {t.id}"})
+    assert step(env, t) == "build"
+    assert env.svc.get_step_context(ORCH, env.svc.get_task(REQ, t.id).step_id).values[
+        "evidence.open_ticket.ticket"] == "4"
+
+
+def test_orchestrator_triggers_sync_every_minutes(env):
+    t1, _ = at_verify(env, 1)
+    t2, _ = at_verify(env, 2)
+    synced = lambda: [a["task_id"] for tool, a in env.calls if tool == "check_sync"]
+    env.orch.tick()
+    assert synced() == [t1.id, t2.id]
+    env.clock.now += timedelta(minutes=4)
+    env.orch.tick()
+    assert synced() == [t1.id, t2.id]
+    env.clock.now += timedelta(minutes=1)
+    env.orch.tick()
+    assert synced() == [t1.id, t2.id] * 2
+
+
+def test_orchestrator_uses_the_steps_version(env):
+    t, sha = at_verify(env)
+    env.gh.runs["task-1"] = [{"id": 5, "head_sha": sha, "status": "in_progress", "conclusion": None}]
+    env.orch.tick()  # the orchestrator holds verify (v1)
+    verify = dict(WORKFLOW["steps"]["verify"], call={**WORKFLOW["steps"]["verify"]["call"], "tool": "actions_search"})
+    assert approve(env, verify=verify) == 2
+    t2, sha2 = at_verify(env, 2)
+    env.gh.runs["task-2"] = [{"id": 6, "head_sha": sha2, "status": "in_progress", "conclusion": None}]
+    env.gh.runs["task-1"][0].update(status="completed", conclusion="success")
+    env.clock.now += timedelta(seconds=61)
+    env.orch.tick()
+    assert step(env, t) == "code_review"
+    assert [tool for tool, _ in env.gh.calls] == ["actions_list", "actions_list", "actions_search"]
+
+
+class Down:
+    def __init__(self, *servers):
+        self.servers = {s: "unreachable" for s in servers}
+
+    def problems(self):
+        return self.servers
+
+
+class Hooks:
+    def __init__(self):
+        self.ticks = []
+
+    def reload(self):
+        pass
+
+    def tick(self, list_events, unavailable):
+        self.ticks.append((list_events(0)["newest_id"], unavailable("github"), unavailable("tickets")))
+
+
+def test_code_step_waits_while_server_unavailable(env):
+    t, sha = at_verify(env)
+    env.gh.runs["task-1"] = [{"id": 5, "head_sha": sha, "status": "completed", "conclusion": "success"}]
+    down, hooks = Down("github"), Hooks()
+    orch = env.new(hooks=hooks, avail=down)
+    orch.tick()
+    assert env.gh.calls == [] and step(env, t) == "verify" and orch.claims == {}
+    assert hooks.ticks[0][1:] == (True, False) and hooks.ticks[0][0] > 0
+    assert env.log == ["not available: github unreachable"]
+    down.servers = {}
+    orch.tick()
+    assert step(env, t) == "code_review" and hooks.ticks[1][1:] == (False, False)

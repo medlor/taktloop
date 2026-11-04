@@ -82,3 +82,12 @@ def test_start_without_claude(tmp_path, monkeypatch):
     monkeypatch.setattr(headless, "command", lambda step_id: ["/nonexistent/claude"])
     with pytest.raises(StartFailed, match="claude is not on PATH"):
         start(7, "tok", tmp_path, {}, [])
+
+
+def test_start_in_checkout_logs_elsewhere(tmp_path, monkeypatch):
+    monkeypatch.setattr(headless, "claude_auth", lambda: SUB)
+    monkeypatch.setattr(headless, "command", lambda step_id: [sys.executable, "-c", "import os; print(os.getcwd())"])
+    (checkout := tmp_path / "product").mkdir()
+    proc, log = start(7, "tok", checkout, {}, [], tmp_path / "factory" / "runs")
+    proc.wait()
+    assert log == tmp_path / "factory" / "runs" / "7-1.log" and log.read_text().strip() == str(checkout)

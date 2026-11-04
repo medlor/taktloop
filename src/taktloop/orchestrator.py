@@ -12,12 +12,15 @@ from pathlib import Path
 import anyio
 
 from taktloop import headless
+from taktloop.availability import Availability, describe, needed_tools
 from taktloop.checks import lookup, substitute
 from taktloop.cli_commands import TokenRejected, ToolRejected, _call_tool
 from taktloop.config import FactoryConfig
-from taktloop.external import Checker, make_checker, read_dotenv
+from taktloop.external import Checker, make_checker, make_tool_lister, read_dotenv
+from taktloop.hooks import HookRunner, run_command
 from taktloop.models import Artifact
 from taktloop.token_client import TokenError, fetch_token
+from taktloop.workflow import Workflow, parse_workflow
 
 LOST = ("not claimed", "claimed by", "claim token")  # the claim is gone: never retry with it
 
@@ -43,9 +46,13 @@ class CoreClient:
 class Orchestrator:
     def __init__(self, cfg: FactoryConfig, core: Callable[[str, dict], dict], external: Checker,
                  launch: Callable, token_for: Callable[[str], str],
-                 clock: Callable[[], datetime] = utc_now, log: Callable[[str], None] = print) -> None:
+                 clock: Callable[[], datetime] = utc_now, log: Callable[[str], None] = print,
+                 hooks: HookRunner | None = None, avail: Availability | None = None) -> None:
         self.cfg, self.o, self.core, self.external = cfg, cfg.orchestrator, core, external
         self.launch, self.token_for, self.clock, self.log = launch, token_for, clock, log
+        self.hooks, self.avail, self.down = hooks, avail, {}  # down: server -> problem
+        self.versions: dict[int, Workflow] = {}
+        self.synced: dict[int, datetime] = {}  # task id -> last check_sync
         # state per step run id: claim token, first/last try, child [Popen, started, identity, seen claimed]
         self.claims, self.first_try, self.last_try, self.children = {}, {}, {}, {}
         self.failed, self.stalled_here = Counter(), set()
@@ -55,6 +62,7 @@ class Orchestrator:
             steps = self.core("sweep", {})["steps"]
         except Exception as e:  # noqa: BLE001 - one line per failure; the loop goes on
             return self.log(f"sweep failed: {type(e).__name__}: {e}")
+        self._guard("availability check", self._availability)
         self._reap({s["step_id"]: s for s in steps})
         for s in steps:
             for act in (self._stall, self._code if s["kind"] == "code" else self._push):  # stalled: no push
@@ -62,6 +70,46 @@ class Orchestrator:
                     act(s)
                 except Exception as e:  # noqa: BLE001
                     self.log(f"{s['step']} (step {s['step_id']}): {type(e).__name__}: {e}")
+        if self.hooks:
+            self._guard("hooks", lambda: (self.hooks.reload(), self.hooks.tick(
+                lambda after: self.core("list_events", {"after_id": after}), self.down.__contains__)))
+        if self.cfg.sync:
+            self._guard("sync", self._sync)
+
+    def _guard(self, what: str, act: Callable[[], object]) -> None:
+        try:
+            act()
+        except Exception as e:  # noqa: BLE001
+            self.log(f"{what} failed: {type(e).__name__}: {e}")
+
+    def _availability(self) -> None:
+        down = self.avail.problems() if self.avail else {}
+        if down != self.down:
+            self.log(f"not available: {describe(down)}" if down else "all servers available")
+        self.down = down
+
+    def _workflow(self, version: int | None = None) -> Workflow:
+        """A version's workflow from the core, cached; None: the live one, fetched."""
+        if version not in self.versions:
+            view = self.core("get_workflow", {} if version is None else {"version": version})
+            self.versions[view["version"]] = parse_workflow(view["data"], view["version"])
+            version = view["version"]
+        return self.versions[version]
+
+    def needed(self) -> dict[str, set[str]]:
+        """server -> tools the live workflow's code steps and the hooks call."""
+        extra: dict[str, set[str]] = {}
+        for h in self.hooks.hooks if self.hooks else []:
+            if h.call:
+                extra.setdefault(h.call[0], set()).add(h.call[1])
+        return needed_tools(self._workflow(), ("call",), extra=extra)
+
+    def _sync(self) -> None:
+        now, every = self.clock(), timedelta(minutes=min(c.every_minutes for c in self.cfg.sync.values()))
+        for t in self.core("list_tasks", {})["tasks"]:
+            if now - self.synced.get(t["id"], now - every) >= every:
+                self.synced[t["id"]] = now
+                self.core("check_sync", {"task_id": t["id"]})
 
     def _reap(self, live: dict[int, dict]) -> None:
         for sid, child in list(self.children.items()):
@@ -76,6 +124,9 @@ class Orchestrator:
 
     def _code(self, s: dict) -> None:
         sid, now = s["step_id"], self.clock()
+        call = self._workflow(s["workflow_version"]).step(s["step"]).call
+        if call.mcp_server in self.down:
+            return  # waits for the server (re-checked once a minute)
         if s["status"] == "open":
             self.claims[sid] = self.core("claim_step", {"step_id": sid})["claim_token"]
             self.first_try.setdefault(sid, now)
@@ -84,12 +135,11 @@ class Orchestrator:
         if sid in self.last_try and now - self.last_try[sid] < timedelta(seconds=self.o.code_retry_seconds):
             return
         self.last_try[sid], claim = now, {"step_id": sid, "claim_token": self.claims[sid]}
-        call = self.cfg.workflow.step(s["step"]).call
         try:
             self.core("heartbeat", claim)
             ctx = self.core("get_step_context", {"step_id": sid})
             arts = {a["name"]: Artifact(**a) for a in ctx["artifacts"]}
-            result = self.external(call.mcp_server, call.tool, substitute(call.args, {}, arts))
+            result = self.external(call.mcp_server, call.tool, substitute(call.args, {}, arts, ctx["values"]))
             evidence = {k: lookup(result, p) for k, p in call.evidence.items()}
             if missing := [k for k, v in evidence.items() if v is None]:
                 return self.log(f"{s['step']}: no {missing[0]} in the result")
@@ -136,12 +186,18 @@ class Orchestrator:
 
 
 def run(cfg: FactoryConfig) -> None:
-    o = cfg.orchestrator
+    o, dotenv, state = cfg.orchestrator, read_dotenv(cfg.env_file), cfg.root / ".taktloop"
+    log = partial(print, flush=True)
+    external = make_checker(cfg.mcp_servers, os.environ, dotenv)
+    secrets = [s.token_env for s in cfg.mcp_servers.values()]  # no token reaches a hook
+    hooks = HookRunner(cfg.hooks_path, state / "hooks.cursor", cfg.mcp_servers.keys(), external,
+                       partial(run_command, cwd=cfg.root, environ=os.environ, secret_envs=secrets), log)
     orch = Orchestrator(
-        cfg, CoreClient(cfg.url, o.identity, cfg.credentials).call,
-        make_checker(cfg.mcp_servers, os.environ, read_dotenv(cfg.env_file)),
-        lambda sid, token, shas: headless.start(sid, token, cfg.root, os.environ, shas),
-        partial(fetch_token, credentials_dir=cfg.credentials), log=partial(print, flush=True))
+        cfg, CoreClient(cfg.url, o.identity, cfg.credentials).call, external,
+        lambda sid, token, shas: headless.start(sid, token, cfg.product_checkout, os.environ, shas,
+                                                state / "runs"),
+        partial(fetch_token, credentials_dir=cfg.credentials), log=log, hooks=hooks)
+    orch.avail = Availability(make_tool_lister(cfg.mcp_servers, os.environ, dotenv), orch.needed)
     print(f"taktloop orchestrator for factory '{cfg.factory}' as {o.identity}", flush=True)
     with suppress(KeyboardInterrupt):
         while True:
