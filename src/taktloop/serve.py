@@ -88,7 +88,7 @@ def prepare(cfg: FactoryConfig) -> Service:
     for server, problem in avail.problems().items():
         logging.getLogger("taktloop").warning("%s %s", server, problem)
     if service.live_version != workflow.version:
-        write_workflow(cfg.workflow_path, service.live_data(), service.live_version)
+        write_workflow(cfg.workflow_path, service.live.data, service.live_version)
     return service
 
 

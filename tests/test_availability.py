@@ -90,3 +90,17 @@ def test_get_factory_reports_servers(store, clock):
     lister.tools = {}
     now[0] = 61.0
     assert svc.get_factory(OWNER, "f").servers == {"github": "ok", "tickets": "unreachable: ConnectError"}
+
+
+def test_get_factory_probes_outside_transaction(store, clock):
+    def lister(server):
+        assert not store._conn.in_transaction
+        return {"get_ticket"}
+    avail = Availability(lambda s: lister(s) and {"get_ticket"}, lambda: {"tickets": {"get_ticket"}})
+    svc = Service(store, parse_workflow(MVP), clock=clock, availability=avail, servers=["tickets"])
+    assert svc.get_factory(OWNER, "f").servers == {"tickets": "ok"}
+
+
+def test_unconfigured_server_is_a_problem():
+    avail = Availability(lambda s: (_ for _ in ()).throw(CheckUnavailable(f"{s} is not configured")), lambda: {})
+    assert avail.check({"x": {"t"}}) == "x not configured"

@@ -104,3 +104,11 @@ def test_tool_lister_lists_fake_server(fake_github):
     assert {"actions_get", "actions_list"} <= make_tool_lister(servers, {"TAKTLOOP_GITHUB_TOKEN": "t"}, {})("github")
     with pytest.raises(CheckUnavailable, match="no credential for github"):
         make_tool_lister(servers, {}, {})("github")
+
+
+def test_unconfigured_server_is_unavailable_not_a_keyerror():
+    from taktloop.external import make_tool_lister
+    with pytest.raises(CheckUnavailable, match="nope is not configured"):
+        make_tool_lister({}, {}, {})("nope")
+    with pytest.raises(CheckUnavailable, match="nope is not configured"):
+        make_checker({}, {}, {})("nope", "t", {})

@@ -54,6 +54,8 @@ def _remote(servers: Mapping[str, ExternalServer], environ: Mapping[str, str],
                     return await action(client)
 
     def go(name: str, action: Callable) -> Any:
+        if name not in servers:
+            raise CheckUnavailable(f"{name} is not configured in factory.yaml")
         server = servers[name]
         token = credential(server, environ, dotenv)
         if token is None:

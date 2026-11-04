@@ -38,11 +38,12 @@ class WorkflowOps(ServiceBase):
         return self._run(caller, "get_workflow", {}, body, writes=False)
 
     def get_factory(self, caller: Caller, factory: str) -> FactoryStatus:
+        down = self._availability.problems() if self._availability else None  # may call out
         def body(tx: Tx, ids: _Ids) -> FactoryStatus:
-            draft, down = tx.get_draft(), self._availability and self._availability.problems()
+            draft = tx.get_draft()
             return FactoryStatus(factory=factory, workflow_version=self.live_version,
                                  draft_problems=_problems(draft.data) if draft else None,
-                                 servers={s: down.get(s, "ok") for s in sorted(self._servers)} if self._availability else {})
+                                 servers={} if down is None else {s: down.get(s, "ok") for s in sorted(self._servers)})
         return self._run(caller, "get_factory", {}, body, writes=False)
 
     def _edit(self, caller: Caller, op: str, detail: dict, change) -> WorkflowView:

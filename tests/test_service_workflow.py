@@ -118,7 +118,7 @@ def test_stale_base_refused(svc):
     wire(svc)
     svc.approve_workflow(OWNER, 1)
     with svc._store.transaction() as tx:  # a draft left over from version 1
-        tx.put_draft(1, svc.live_data(), "assistant", svc._clock())
+        tx.put_draft(1, svc.live.data, "assistant", svc._clock())
     assert reason(svc.approve_workflow, OWNER, 1) == "draft is based on version 1, live is 2"
 
 

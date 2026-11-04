@@ -40,7 +40,7 @@ def test_hand_edited_workflow_becomes_next_version(store, clock):
     (event,) = _changes(store)
     assert event.detail == {"version": 2, "source": "file"} and event.task_id is None
     assert event.subject == "core"
-    assert svc.live_data()["steps"]["plan"]["instructions"] == "Different."
+    assert svc.live.data["steps"]["plan"]["instructions"] == "Different."
 
 
 def test_task_keeps_its_version(store, clock):

@@ -501,3 +501,52 @@ def test_workflow_put_bad_file_is_one_line(tmp_path, capsys):
         assert cli.main(["--url", "http://127.0.0.1:1", "workflow", "put", "x", str(path)]) == 2
         err = capsys.readouterr().err
         assert err.startswith("taktloop: ") and "Traceback" not in err and err.count("\n") == 1
+
+
+CHK = {"start": "b", "steps": {"b": {
+    "kind": "agent", "role": "planner", "skill": "s", "output": {"artifacts": ["doc"]},
+    "check": {"mcp_server": "github", "tool": "t", "expect": {"a": "b"}}, "evidence": ["x"],
+    "on_fail": "b", "next": "done"}}}
+
+
+def _down_factory(tmp_path, monkeypatch, workflow):
+    import socket
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    monkeypatch.setenv("TAKTLOOP_GITHUB_TOKEN", "t")
+    servers = {"github": {"url": f"http://127.0.0.1:{port}/mcp", "token_env": "TAKTLOOP_GITHUB_TOKEN"}}
+    return write_factory(tmp_path, {"database": str(tmp_path / "f.db"), "auth": AUTH,
+                                    "mcp_servers": servers}, workflow)
+
+
+def test_serve_refuses_changed_file_whose_tools_are_unavailable(tmp_path, monkeypatch, capsys):
+    import yaml
+    cfg = _down_factory(tmp_path, monkeypatch, ONLY)
+    from taktloop import serve
+    from taktloop.config import load_config
+    serve.prepare(load_config(cfg))
+    (tmp_path / "workflow.yaml").write_text(yaml.safe_dump(CHK, sort_keys=False))
+    assert cli.main(["--config", str(cfg), "serve"]) == 2
+    err = capsys.readouterr().err
+    assert err.startswith("taktloop: workflow.yaml: github unreachable") and err.count("\n") == 1
+
+
+def test_serve_starts_with_unchanged_file_and_warns_per_problem(tmp_path, monkeypatch, caplog):
+    from taktloop import serve
+    from taktloop.config import load_config
+    cfg = load_config(_down_factory(tmp_path, monkeypatch, CHK))
+    with caplog.at_level("WARNING", logger="taktloop"):
+        svc = serve.prepare(cfg)
+        serve.prepare(cfg)  # unchanged file, server still down: starts again
+    assert [r.getMessage()[:17] for r in caplog.records] == ["github unreachabl"] * 2
+    assert "github unreachable" in svc._tools_check(svc.live)  # the check prepare built
+
+
+def test_render_status():
+    d = {"factory": "f", "workflow_version": 3, "servers": {"tickets": "ok", "github": "missing tool x"},
+         "draft_problems": ["unreachable steps: a"]}
+    assert cli_commands.render_status(d) == (
+        "factory f, workflow version 3\n  tickets: ok\n  github: missing tool x\n"
+        "draft problem: unreachable steps: a")
+    assert cli.main(["status", "--url", "http://x"]) == 2  # parsed; core not reachable
