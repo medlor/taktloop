@@ -25,7 +25,8 @@ Each workflow step is assigned to a role. A factory's binding decides which exec
 | Role | Responsibility | Permissions in the core |
 | --- | --- | --- |
 | **Orchestrator** | the taktloop orchestrator: manages events and task transitions; pushes steps that need pushing (starts headless runs, notifies people); escalates stalls and out-of-sync events. Uses AI only where needed (ADR 0004) | read state and the audit log; start or notify executors; flag tasks; **can't do or approve work** |
-| **Triage** | classifies new requests: automatable, needs spec, needs clarification, park | set a task's route and priority |
+| **Triage** | classifies new requests and picks a route: quick, small, project or park | complete the `triage` step with a route and a reason (as built: the headless `triage-bot`) |
+| **Steward** | code steps that only keep records, such as opening the task's ticket (`open_ticket`) | run those code steps; held only by the orchestrator's identity, like `verifier` for `verify` |
 | **Planner** | turns an idea into a spec and plan | submit spec/plan artifacts for a task |
 | **Builder** | implements | submit implementation results (branch, commit, artifacts) for a task |
 | **Reviewer** | reviews the builder's output | submit a review verdict |
@@ -39,7 +40,7 @@ Each workflow step is assigned to a role. A factory's binding decides which exec
 | --- | --- | --- |
 | **Requester** | submits ideas, answers clarification questions, accepts results | create tasks; submit clarification and acceptance events |
 | **Approver** | holds human gates (spec approval, release sign-off) | submit approval/rejection events at gates |
-| **Factory owner** | configures workflows, bindings and plugins; approves breakouts | change factory configuration |
+| **Factory owner** | configures workflows, bindings and plugins; approves breakouts | change factory configuration. As built: edit the workflow draft like the factory assistant, and make it live (`approve_workflow`) |
 | **Viewer** | follows progress | read state |
 | **Auditor** | checks what happened and why | read state and the full audit log |
 
@@ -47,7 +48,7 @@ Each workflow step is assigned to a role. A factory's binding decides which exec
 
 | Role | Responsibility | Permissions in the core |
 | --- | --- | --- |
-| **Factory assistant** | the breakout-chat agent: drafts skills, plugins and workflow changes | *propose* configuration changes; they take effect only after a factory owner approves them |
+| **Factory assistant** | the breakout-chat agent: drafts skills, plugins and workflow changes | *propose* configuration changes; they take effect only after a factory owner approves them. As built: edit the workflow draft (`put_step`, `remove_step`, `set_start`, `discard_draft`), not approve it |
 | **Integration** | webhooks, CI callbacks, other systems | submit events of the types declared for it; nothing else |
 
 Roles are a default set. A factory may rename, merge or add roles, for example one combined "builder + verifier" role for a small team, as long as the separation rules below still hold.
@@ -60,6 +61,10 @@ Roles are a default set. A factory may rename, merge or add roles, for example o
 4. **The orchestrator dispatches, it doesn't work.** It can't submit results of agent or human steps, and it can't approve. **Decided:** a code step it runs (PRD §7) is recorded under the step's own role (for example releaser) with executor `code`, so separation of duties still applies to it.
 5. **Gates are role-bound.** A human gate names the role that may pass it (for example `approver`). A verified gate is checked by plain code (ADR 0002).
 6. **Everything is audited.** Every operation is logged with the caller's identity, role, task and outcome. Denied calls are logged too.
+
+### 3.4 As built in the MVP
+
+The template's `dev-issuer.yaml` grants: `tobias` requester, approver, reviewer and factory owner; `agent-a` and `agent-b` planner, builder and reviewer; `orchestrator` orchestrator, verifier and steward; `reviewer-bot` reviewer; `triage-bot` triage; `assistant` factory assistant. Editing and approving the workflow are separate roles, so an assistant's change never goes live without the owner. In `strict` separation an owner may still approve a draft they edited themselves (otherwise nobody could edit by hand).
 
 ## 5. Identity and tokens
 

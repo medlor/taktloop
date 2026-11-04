@@ -1,0 +1,32 @@
+# Hooks: one MCP call (or one command) per matching core event, fired by the orchestrator.
+# Re-read on the next tick after a change; an invalid file is refused as a whole (the last valid one stays).
+# Reference: docs/user/workflow-reference.md#hooks
+hooks:
+  - name: ticket-status
+    on: step_opened
+    map:                                     # event.step -> {{mapped}}; steps not listed: no call
+      triage: triage
+      triage_decision: waiting for decision
+      design: in design
+      design_approval: waiting for approval
+      plan: planning
+      plan_review: in review
+      workspace: in progress
+      build: in progress
+      code_review: in review
+      verify: in review
+      integration_approval: waiting for approval
+      integrate: in progress
+    call:
+      mcp_server: tickets
+      tool: update_status
+      args: {id: "{{evidence.open_ticket.ticket}}", status: "{{mapped}}"}
+  - name: ticket-close
+    on: task_closed
+    call:
+      mcp_server: tickets
+      tool: close_ticket
+      args: {id: "{{evidence.open_ticket.ticket}}", resolution: "{{event.status}}"}
+  # - name: notify-stall                     # the escape hatch, example only
+  #   on: report_stall
+  #   command: ./hooks/notify.sh             # event JSON on stdin, cwd = factory dir, 30 s timeout

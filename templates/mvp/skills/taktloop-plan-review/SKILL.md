@@ -1,6 +1,6 @@
 ---
 name: taktloop-plan-review
-description: Use when a taktloop step context names the taktloop-plan-review skill, to review an implementation plan against its approved design doc and return a pass or issues verdict with ranked findings.
+description: Use when a taktloop step context names the taktloop-plan-review skill, to review an implementation plan against its approved design doc (or the task's request when there is none) and return a pass or issues verdict with ranked findings.
 ---
 
 # taktloop plan review
@@ -18,6 +18,9 @@ The step context (`get_step_context`) gives you:
 - `review_of`: the step whose work you review (here `plan`).
 - `artifacts`: the pinned artifacts of earlier steps. Use the **latest round**
   of the `plan` artifact and the approved `design_doc`.
+- `request`: the task's request. A task that triage routed **small** has
+  **no design doc**: then the request is the requirement, and wherever this
+  skill says "design doc" below, read "the task's request".
 
 Read both from git, never from the working tree:
 

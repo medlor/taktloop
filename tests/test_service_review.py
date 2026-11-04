@@ -10,12 +10,13 @@ from taktloop.workflow import parse_workflow
 from conftest import ME, SHA
 
 ROOT = Path(__file__).resolve().parent.parent
+M3B = ROOT / "tests/fixtures/m3b"  # the M3b factory and workflow, frozen for the tests written against them
 SHA2, SHA3 = "b" * 40, "c" * 40
 
 
 @pytest.fixture
 def svc(store, clock):
-    return Service(store, load_config(ROOT / "factory.yaml").workflow, clock=clock)
+    return Service(store, load_config(M3B / "factory.yaml").workflow, clock=clock)
 
 
 def work(svc, tid, name, sha=SHA):

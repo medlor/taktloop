@@ -49,7 +49,7 @@ def test_core_down_message_and_exit_code(capsys):
     url = "http://127.0.0.1:1/mcp"
     assert cli.main(["--url", url, "task", "list"]) == 2
     err = capsys.readouterr().err
-    assert err == f"taktloop core not reachable at {url} — start it with `uv run taktloop serve`\n"
+    assert err == f"taktloop core not reachable at {url} — start the factory with `taktloop up`\n"
 
 
 def test_rejection_exit_code(monkeypatch, capsys):
@@ -550,3 +550,90 @@ def test_render_status():
         "factory f, workflow version 3\n  tickets: ok\n  github: missing tool x\n"
         "draft problem: unreachable steps: a")
     assert cli.main(["status", "--url", "http://x"]) == 2  # parsed; core not reachable
+
+
+def test_init_into_empty_dir(tmp_path, capsys):
+    import json
+    import subprocess
+
+    import yaml
+
+    from taktloop.config import load_config
+
+    d, checkout = tmp_path / "factory", tmp_path / "product"
+    checkout.mkdir()
+    assert cli.main(["init", str(d), "--repo", "acme/widget", "--checkout", str(checkout)]) == 0
+    out = capsys.readouterr().out
+    assert "TAKTLOOP_GITHUB_TOKEN" in out and "taktloop up" in out
+    for name in ("factory.yaml", "workflow.yaml", "hooks.yaml", "dev-issuer.yaml", ".env", ".gitignore"):
+        assert (d / name).is_file(), name
+        assert "__OWNER__" not in (d / name).read_text() and "__REPO__" not in (d / name).read_text()
+    cfg = load_config(d / "factory.yaml")
+    assert yaml.safe_load((d / "factory.yaml").read_text())["product"] == {"checkout": "../product"}
+    assert cfg.product_checkout.resolve() == checkout.resolve()
+    args = cfg.workflow.step("verify").call.args
+    assert (args["owner"], args["repo"]) == ("acme", "widget")
+    env = dict(line.split("=", 1) for line in (d / ".env").read_text().splitlines())
+    assert len(env["TAKTLOOP_TICKETS_TOKEN"]) == 43 and env["TAKTLOOP_GITHUB_TOKEN"] == ""
+    assert (d / ".gitignore").read_text().split() == [".env", ".taktloop/"]
+    creds = d / ".taktloop/credentials"
+    assert {p.stem for p in creds.iterdir()} >= {"tobias", "orchestrator", "triage-bot", "assistant"}
+    assert json.loads((creds / "tobias.json").read_text())["issuer"] == "http://127.0.0.1:8766"
+    assert subprocess.run(["git", "-C", str(d), "rev-parse", "--show-toplevel"], capture_output=True,
+                          text=True).stdout.strip() == str(d.resolve())
+    before = (d / ".env").read_text()
+    assert cli.main(["init", str(d), "--repo", "acme/widget", "--checkout", str(checkout)]) == 2
+    assert "not empty" in capsys.readouterr().err and (d / ".env").read_text() == before
+
+
+def test_init_refuses_a_bad_repo(tmp_path, capsys):
+    assert cli.main(["init", str(tmp_path / "f"), "--repo", "widget", "--checkout", "."]) == 2
+    assert "OWNER/REPO" in capsys.readouterr().err and not (tmp_path / "f").exists()
+
+
+def test_connect_merges_mcp_json(tmp_path, capsys):
+    import json
+
+    other = {"type": "stdio", "command": "x"}
+    (tmp_path / ".mcp.json").write_text(json.dumps({"mcpServers": {"other": other}}))
+    assert cli.main(["connect", "http://core:8765/mcp", "--tickets-url", "http://core:8767/mcp",
+                     "--dest", str(tmp_path)]) == 0
+    assert "TAKTLOOP_TOKEN=$(taktloop token agent-a --config" in capsys.readouterr().out
+    assert json.loads((tmp_path / ".mcp.json").read_text()) == {"mcpServers": {
+        "other": other,
+        "taktloop": {"type": "http", "url": "http://core:8765/mcp",
+                     "headers": {"Authorization": "Bearer ${TAKTLOOP_TOKEN}"}},
+        "tickets": {"type": "http", "url": "http://core:8767/mcp",
+                    "headers": {"Authorization": "Bearer ${TAKTLOOP_TICKETS_TOKEN}"}}}}
+    skills = tmp_path / ".claude/skills"
+    assert {p.name for p in skills.iterdir()} == {"taktloop", "taktloop-plan-review", "taktloop-triage",
+                                                  "taktloop-breakout"}
+    template = Path(cli_commands.TEMPLATES) / "mvp/skills"
+    assert (skills / "taktloop/SKILL.md").read_text() == (template / "taktloop/SKILL.md").read_text()
+
+
+def test_connect_without_tickets_and_a_bad_mcp_json(tmp_path, capsys):
+    import json
+
+    assert cli.main(["connect", "http://127.0.0.1:8765/mcp", "--dest", str(tmp_path)]) == 0
+    assert set(json.loads((tmp_path / ".mcp.json").read_text())["mcpServers"]) == {"taktloop"}
+    (tmp_path / ".mcp.json").write_text("{not json")
+    assert cli.main(["connect", "http://127.0.0.1:8765/mcp", "--dest", str(tmp_path)]) == 2
+    assert ".mcp.json" in capsys.readouterr().err
+    assert cli.main(["connect", "not a url", "--dest", str(tmp_path)]) == 2
+
+
+def test_install_skill_is_gone(tmp_path, capsys):
+    with pytest.raises(SystemExit):  # replaced by connect
+        cli.main(["install-skill", "--dest", str(tmp_path)])
+
+
+def test_up_stops_when_a_child_exits(tmp_path, capsys):
+    from test_e2e_m2 import _free_port
+
+    auth = {**AUTH, "issuer": f"http://127.0.0.1:{_free_port()}"}  # not the default port: a factory may run there
+    cfg = write_factory(tmp_path, {"auth": auth}, ONLY)  # no dev-issuer.yaml: the issuer exits at once
+    assert cli.main(["--config", str(cfg), "up"]) == 1
+    captured = capsys.readouterr()
+    assert "issuer| taktloop:" in captured.out and "dev-issuer.yaml" in captured.out
+    assert "taktloop: issuer exited (2); stopping all" in captured.err

@@ -9,5 +9,8 @@ identities:
                      taktloop:taktloop:reviewer]}
   agent-b: {scopes: [taktloop:taktloop:planner, taktloop:taktloop:builder,
                      taktloop:taktloop:reviewer]}
-  orchestrator: {scopes: [taktloop:taktloop:orchestrator, taktloop:taktloop:verifier]}
+  orchestrator: {scopes: [taktloop:taktloop:orchestrator, taktloop:taktloop:verifier,
+                          taktloop:taktloop:steward]}
   reviewer-bot: {scopes: [taktloop:taktloop:reviewer]}
+  triage-bot: {scopes: [taktloop:taktloop:triage]}
+  assistant: {scopes: [taktloop:taktloop:factory_assistant]}

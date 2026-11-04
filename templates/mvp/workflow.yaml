@@ -1,75 +1,114 @@
-start: design
+version: 1
+start: open_ticket
 steps:
+  open_ticket:
+    kind: code
+    role: steward
+    description: Opens the task's ticket; its id is the evidence other parts refer to.
+    call:
+      mcp_server: tickets
+      tool: create_ticket
+      args: {title: "{{task.title}}", body: "{{task.request}}"}
+      evidence: {ticket: id}
+    next: triage
+  triage:
+    kind: agent
+    role: triage
+    description: A headless agent picks the route (quick, small, project or park) with a one-line reason.
+    skill: taktloop-triage
+    dispatch: push
+    push: {start: claude-headless, identity: triage-bot}
+    instructions: >
+      Read the request and look at the repository. Pick quick, small, project or park,
+      with a one-line reason. Park when the request is not ready or you cannot tell.
+    routes: {quick: workspace, small: plan, project: design, park: triage_decision}
+  triage_decision:
+    kind: human_gate
+    role: approver
+    description: A parked task. Someone must decide; parked tasks show as stalled.
+    routes: {quick: workspace, small: plan, project: design, cancel: cancelled}
   design:
     kind: agent
     role: planner
+    description: The design doc, written with the requester (project route).
     skill: brainstorming
     instructions: >
       Run brainstorming with the requester until the design doc is written
       and the requester is happy with it. Do not invoke writing-plans.
     output:
-      artifacts: [design_doc]        # required artifact names
+      artifacts: [design_doc]
     next: design_approval
   design_approval:
     kind: human_gate
     role: approver
+    description: The approver accepts the design doc or sends it back with a reason.
     approves: design
     on_approve: plan
-    on_reject: design                # reopens design as round n+1, with the reason
+    on_reject: design
   plan:
     kind: agent
     role: planner
+    description: The implementation plan, from the approved design doc or from the request (small route).
     skill: writing-plans
     instructions: >
-      Write the plan from the approved design doc. Do not ask for an
-      execution mode and do not start executing.
+      Write the plan from the approved design doc. If the task has no approved
+      design doc (small route), write the plan from the task's request. Do not
+      ask for an execution mode and do not start executing.
     output:
       artifacts: [plan]
     next: plan_review
   plan_review:
     kind: agent
     role: reviewer
+    description: Another agent reviews the plan; the second round of issues escalates to the approver.
     skill: taktloop-plan-review
     instructions: >
-      Review the plan against the approved design doc. Return pass or
-      issues with concrete findings. Do not edit the plan.
-    review_of: plan                # the step whose latest artifact is reviewed
+      Review the plan against the approved design doc, or against the task's
+      request if there is no design doc. Return pass or issues with concrete
+      findings. Do not edit the plan.
+    review_of: plan
     on_pass: workspace
-    on_issues: plan                # reopens plan as round n+1 with the findings
-    max_issue_rounds: 2            # the 2nd 'issues' escalates instead
+    on_issues: plan
+    max_issue_rounds: 2
     on_escalate: plan_escalation
   plan_escalation:
     kind: human_gate
     role: approver
-    on_approve: workspace          # approve the plan anyway
-    on_reject: [plan, design]      # first entry is the default target
+    description: The plan review escalated; approve the plan anyway or send it back.
+    on_approve: workspace
+    on_reject: [plan, design]
   workspace:
     kind: agent
     role: builder
+    description: The task branch from origin/main with a clean test baseline (the quick route starts here).
     skill: using-git-worktrees
     instructions: >
       Create the task branch taktloop/<task id>-<short-name> from origin/main,
       verify a clean test baseline, push the branch to origin.
-    output: {artifacts: [workspace]}       # path ".", commit = the base commit
+    output: {artifacts: [workspace]}
     next: build
   build:
     kind: agent
     role: builder
+    description: The change, test-driven, pushed on the task branch.
     skill: subagent-driven-development
     instructions: >
-      Implement the approved plan on the task branch with test-driven development.
+      Implement the approved plan on the task branch with test-driven development,
+      or the task's request if the task has no plan (quick route).
       Commit, push the branch to origin. Do not merge and do not open a pull request.
-    output: {artifacts: [change]}          # path ".", commit = the pushed branch head
+    output: {artifacts: [change]}
     next: code_review
   code_review:
     kind: agent
     role: reviewer
+    description: A headless reviewer checks the change; the second round of issues escalates.
     skill: requesting-code-review
-    dispatch: push                         # the orchestrator starts an executor
+    dispatch: push
     push: {start: claude-headless, identity: reviewer-bot}
     instructions: >
-      Review the change (workspace commit .. change commit) against the plan.
-      Return pass, or issues with the critical and important findings. Do not edit code.
+      Review the change (workspace commit .. change commit) against the plan, or
+      against the task's request if there is no plan. Return pass, or issues with
+      the critical and important findings. Do not edit code.
     review_of: build
     on_pass: verify
     on_issues: build
@@ -78,51 +117,55 @@ steps:
   build_escalation:
     kind: human_gate
     role: approver
-    on_approve: verify                     # accept the change despite the review
+    description: The code review escalated; accept the change anyway or send it back.
+    on_approve: verify
     on_reject: [build, plan]
   verify:
-    kind: code                             # run by the orchestrator, no LLM
+    kind: code
     role: verifier
-    call:                                  # the orchestrator's own MCP call
+    description: The orchestrator finds the CI run of the change; the core checks it is green for that commit.
+    call:
       mcp_server: github
       tool: actions_list
       args:
         method: list_workflow_runs
-        owner: medlor
-        repo: taktloop
+        owner: __OWNER__
+        repo: __REPO__
         resource_id: ci.yml
         workflow_runs_filter: {branch: "{{artifacts.change.branch}}"}
-      evidence:                            # evidence key: dotted path into the result
+      evidence:
         ci_run: workflow_runs.workflow_runs.0.id
-    evidence: [ci_run]                     # required evidence keys (§6.3)
-    check:                                 # the hard gate (§5)
+    evidence: [ci_run]
+    check:
       mcp_server: github
       tool: actions_get
       args:
         method: get_workflow_run
-        owner: medlor
-        repo: taktloop
+        owner: __OWNER__
+        repo: __REPO__
         resource_id: "{{evidence.ci_run}}"
-      match:                               # else: refused, nothing changes
+      match:
         workflow_run.head_sha: "{{artifacts.change.commit}}"
         workflow_run.path: .github/workflows/ci.yml
         workflow_run.status: completed
-      expect:                              # else: back to on_fail with the result
+      expect:
         workflow_run.conclusion: success
     next: integration_approval
     on_fail: build
   integration_approval:
     kind: human_gate
     role: approver
+    description: The approver accepts the reviewed, green change for merging.
     approves: build
     on_approve: integrate
     on_reject: [build, plan]
   integrate:
     kind: agent
     role: builder
+    description: The change commit merged into main and pushed.
     skill: finishing-a-development-branch
     instructions: >
       Merge the change commit (not the branch tip) into main, push main to origin.
       Do not ask which option to take; the approver decided "merge".
-    output: {artifacts: [merge]}           # path ".", commit = the merge commit on main
+    output: {artifacts: [merge]}
     next: done

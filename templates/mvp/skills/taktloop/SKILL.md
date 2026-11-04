@@ -6,8 +6,8 @@ description: Use when the user says "work on taktloop" or asks you to pick up, c
 # taktloop bridge
 
 taktloop is a task core you reach through MCP tools. A task moves through steps
-(for example design, then a human approval gate, then plan, then workspace,
-build, code review, verify and integrate). You run **exactly one step** per
+(for example open ticket, triage, design, a human approval gate, plan,
+workspace, build, code review, verify and integrate). You run **exactly one step** per
 session, hand back its artifacts, and stop.
 
 ## Setup
@@ -16,10 +16,9 @@ The core is registered through the project's `.mcp.json`, which sends the
 bearer token from the `TAKTLOOP_TOKEN` environment variable. Every session
 runs as one identity (for example `agent-a`) and is started like this:
 
-    TAKTLOOP_TOKEN=$(uv run taktloop token <identity>) claude
+    TAKTLOOP_TOKEN=$(taktloop token <identity> --config <factory dir>/factory.yaml) claude
 
-(the dev issuer and the core must be running: `uv run taktloop issuer` and
-`uv run taktloop serve`).
+(the factory must be running: `taktloop up` in the factory directory).
 
 - If the taktloop tools (`list_open_steps`, `claim_step`, ...) are not
   available, tell the user to check `.mcp.json` and to restart the session
@@ -67,6 +66,12 @@ runs as one identity (for example `agent-a`) and is started like this:
      and 6 below: call `complete_step(step_id, claim_token, outcome="pass")`
      or `complete_step(step_id, claim_token, outcome="issues",
      findings="...")`, with no artifacts, then stop (step 7).
+   - If the step has **routes** (its instructions name them, for example
+     `triage`: quick, small, project or park), it has no artifacts either:
+     pick one route as the skill says and call `complete_step(step_id,
+     claim_token, outcome=<route>, findings=<reason>)`, with the route name
+     as `outcome` and a one-line reason as `findings` (required). An unknown
+     route is refused. Then stop (step 7).
 5. **Finish the skill's own review first.** An artifact is final only after the
    running skill's in-chat review checkpoint is done (for example "please
    review the design doc") and the user is happy with it. Make the requested
@@ -99,6 +104,10 @@ After the plan passes review, the task goes on to code on its own branch of
 this repository. These artifacts are commits, not files: their `path` is
 `"."` and their `commit` is the commit that matters.
 
+A task that triage routed **quick** has no design doc and no plan: build
+from the task's request, and review against the request. A **small** task
+has a plan but no design doc.
+
 - **workspace** (`workspace` artifact): create the task branch from
   `origin/main`, check the tests pass, push the branch to `origin`. `commit`
   is the base commit.
@@ -125,15 +134,21 @@ Skills often ask the user to approve a result in chat (for example "approve
 the design doc"). Hold that conversation as the skill asks, but the **binding**
 approval is the core's gate, not the chat. After completing, tell the user:
 
-    uv run taktloop approve <task_id>
-    uv run taktloop reject <task_id> --reason "..."
+    taktloop approve <task_id>
+    taktloop reject <task_id> --reason "..."
+
+(the approver runs these in the factory directory, or adds `--config
+<factory dir>/factory.yaml`). A parked task waits at `triage_decision`,
+a gate with routes; the approver picks one:
+
+    taktloop route <task_id> quick --reason "..."     # or small, project, cancel
 
 When a review verdict escalates the task (it then waits at an escalation gate
 such as `plan_escalation`), tell the user the approver's options there:
 
-    uv run taktloop approve <task_id>                       # approve the latest plan anyway
-    uv run taktloop override <task_id> --reason "..."      # same result, recorded as an override
-    uv run taktloop reject <task_id> --to plan --reason "..."    # or --to design
+    taktloop approve <task_id>                       # approve the latest plan anyway
+    taktloop override <task_id> --reason "..."      # same result, recorded as an override
+    taktloop reject <task_id> --to plan --reason "..."    # or --to design
 
 The same holds for `build_escalation` (`--to build` or `--to plan`) and for
 `integration_approval`, the gate before `integrate`.
@@ -142,6 +157,15 @@ An approver can also `override` a plan review at any earlier point (while the
 review is open or claimed, or during a revision round). They can do all of
 this at any time, from anywhere. Do not call `decide_gate` or
 `override_review` yourself.
+
+## Factory assistant
+
+If the user wants to change the workflow itself (add, change or remove a
+step, change who does a step), that is not a step: use the
+`taktloop-breakout` skill. It edits a draft through the core's workflow tools
+(`get_workflow`, `put_step`, `remove_step`, `set_start`, `discard_draft`) as
+an identity with the `factory_assistant` role (for example `assistant`), and
+asks the factory owner to approve.
 
 ## Long sessions and failure
 

@@ -4,32 +4,74 @@ from pathlib import Path
 
 import yaml
 
-from taktloop.cli import main
 from taktloop.config import load_config
+from taktloop.hooks import parse_hooks
 
 ROOT = Path(__file__).resolve().parent.parent
-SKILL = ROOT / "templates/mvp/skills/taktloop/SKILL.md"
-REVIEW_SKILL = ROOT / "templates/mvp/skills/taktloop-plan-review/SKILL.md"
+TEMPLATE = ROOT / "templates/mvp"
+SKILL = TEMPLATE / "skills/taktloop/SKILL.md"
+REVIEW_SKILL = TEMPLATE / "skills/taktloop-plan-review/SKILL.md"
+TRIAGE_SKILL = TEMPLATE / "skills/taktloop-triage/SKILL.md"
+BREAKOUT_SKILL = TEMPLATE / "skills/taktloop-breakout/SKILL.md"
 
 
-def test_template_and_repo_factory_load():
-    a = load_config(ROOT / "templates/mvp/factory.yaml")
-    b = load_config(ROOT / "factory.yaml")
-    assert a.workflow == b.workflow
-    assert a.workflow.start == "design"
-    for cfg in (a, b):
-        assert (cfg.auth_issuer, cfg.auth_audience, cfg.cli_identity) == ("http://127.0.0.1:8766", "taktloop", "tobias")
-        steps = cfg.workflow.steps
-        assert steps["verify"].kind == "code"
-        assert (steps["code_review"].dispatch, steps["code_review"].push_identity) == ("push", "reviewer-bot")
-        assert cfg.orchestrator.identity == "orchestrator"
+def _template(tmp_path):
+    """The template's files with __OWNER__/__REPO__ filled in, as `taktloop init` writes them."""
+    for name in ("factory.yaml", "workflow.yaml", "hooks.yaml", "dev-issuer.yaml"):
+        text = (TEMPLATE / name).read_text().replace("__OWNER__", "medlor").replace("__REPO__", "taktloop")
+        (tmp_path / name).write_text(text)
+    return tmp_path / "factory.yaml"
 
 
-def test_dev_issuer_gives_verifier_only_to_the_orchestrator():
-    identities = yaml.safe_load((ROOT / "dev-issuer.yaml").read_text())["identities"]
-    holders = {n for n, i in identities.items() if "taktloop:taktloop:verifier" in i["scopes"]}
-    assert holders == {"orchestrator"}
+def test_template_loads(tmp_path):
+    cfg = load_config(_template(tmp_path))
+    assert (cfg.auth_issuer, cfg.auth_audience, cfg.cli_identity) == ("http://127.0.0.1:8766", "taktloop", "tobias")
+    assert cfg.workflow_path == tmp_path / "workflow.yaml"
+    wf, steps = cfg.workflow, cfg.workflow.steps
+    assert wf.start == "open_ticket"
+    assert [s for s in steps.values() if not s.description] == []
+    assert "\n" not in "".join(s.description.strip() for s in steps.values())
+    assert (steps["open_ticket"].kind, steps["open_ticket"].role, steps["open_ticket"].next) == ("code", "steward", "triage")
+    assert dict(steps["triage"].routes) == {"quick": "workspace", "small": "plan", "project": "design",
+                                            "park": "triage_decision"}
+    assert (steps["triage"].dispatch, steps["triage"].push_identity) == ("push", "triage-bot")
+    assert dict(steps["triage_decision"].routes) == {"quick": "workspace", "small": "plan", "project": "design",
+                                                     "cancel": "cancelled"}
+    assert (steps["design_approval"].approves, steps["integration_approval"].approves) == ("design", "build")
+    assert steps["verify"].kind == "code"
+    assert (steps["verify"].call.args["owner"], steps["verify"].call.args["repo"]) == ("medlor", "taktloop")
+    assert (steps["code_review"].dispatch, steps["code_review"].push_identity) == ("push", "reviewer-bot")
+    for name in ("plan", "plan_review", "build", "code_review"):
+        assert "request" in steps[name].instructions, name
+    assert set(cfg.mcp_servers) == {"github", "tickets"}
+    assert (cfg.mcp_servers["tickets"].url, cfg.mcp_servers["tickets"].token_env) == (
+        "http://127.0.0.1:8767/mcp", "TAKTLOOP_TICKETS_TOKEN")
+    sync = cfg.sync["ticket"]
+    assert (sync.every_minutes, sync.check.mcp_server, sync.check.tool) == (5, "tickets", "get_ticket")
+    assert dict(sync.check.args) == {"id": "{{evidence.open_ticket.ticket}}"}
+    assert dict(sync.check.expect) == {"closed": "False"}
+    assert cfg.orchestrator.identity == "orchestrator"
+    hooks = parse_hooks(yaml.safe_load((tmp_path / "hooks.yaml").read_text()), cfg.mcp_servers.keys())
+    assert [(h.name, h.on) for h in hooks] == [("ticket-status", "step_opened"), ("ticket-close", "task_closed")]
+    assert set(hooks[0].map) <= set(steps) and hooks[0].map["workspace"] == "in progress"
+    assert hooks[1].call == ("tickets", "close_ticket", {"id": "{{evidence.open_ticket.ticket}}",
+                                                         "resolution": "{{event.status}}"})
+
+
+def test_template_keeps_the_owner_and_repo_tokens():
+    text = (TEMPLATE / "workflow.yaml").read_text()
+    assert "owner: __OWNER__" in text and "repo: __REPO__" in text and "medlor" not in text
+
+
+def test_dev_issuer_roles():
+    identities = yaml.safe_load((TEMPLATE / "dev-issuer.yaml").read_text())["identities"]
+    for role in ("verifier", "steward", "orchestrator"):
+        holders = {n for n, i in identities.items() if f"taktloop:taktloop:{role}" in i["scopes"]}
+        assert holders == {"orchestrator"}, role
     assert identities["reviewer-bot"]["scopes"] == ["taktloop:taktloop:reviewer"]
+    assert identities["triage-bot"]["scopes"] == ["taktloop:taktloop:triage"]
+    assert identities["assistant"]["scopes"] == ["taktloop:taktloop:factory_assistant"]
+    assert "taktloop:taktloop:factory_owner" in identities["tobias"]["scopes"]
 
 
 def test_bridge_skill_frontmatter():
@@ -79,13 +121,35 @@ def test_plan_review_skill():
         assert word in body, word
 
 
-def test_install_skill_installs_both(tmp_path):
-    assert main(["install-skill", "--dest", str(tmp_path / "D")]) == 0
-    assert (tmp_path / "D/taktloop/SKILL.md").read_text() == SKILL.read_text()
-    assert (tmp_path / "D/taktloop-plan-review/SKILL.md").read_text() == REVIEW_SKILL.read_text()
+def test_plan_review_without_a_design_doc():
+    assert "request" in REVIEW_SKILL.read_text() and "no design doc" in REVIEW_SKILL.read_text()
+
+
+def test_bridge_skill_m4():
+    text = SKILL.read_text()
+    for word in ("routes", "outcome=<route>", "findings=<reason>", "taktloop-breakout", "--config"):
+        assert word in text, word
+
+
+def test_triage_skill():
+    front, body = _frontmatter(TRIAGE_SKILL.read_text())
+    assert re.search(r"^name: taktloop-triage$", front, re.M)
+    assert re.search(r"^description: \S", front, re.M)
+    for word in ("quick", "small", "project", "park", "complete_step", "outcome", "findings", "Never ask"):
+        assert word in body, word
+
+
+def test_breakout_skill():
+    front, body = _frontmatter(BREAKOUT_SKILL.read_text())
+    assert re.search(r"^name: taktloop-breakout$", front, re.M)
+    assert re.search(r"^description: \S", front, re.M)
+    for word in ("get_workflow", "put_step", "remove_step", "set_start", "discard_draft", "approve_workflow",
+                 "problems", "refused", "description", "approve", "workflow-reference.md"):
+        assert word in body, word
 
 
 def test_mcp_json_reads_the_token_from_the_environment():
-    assert json.loads((ROOT / ".mcp.json").read_text()) == {"mcpServers": {"taktloop": {
+    """This repo's own .mcp.json, as `taktloop connect` writes it (a tickets entry may be added)."""
+    assert json.loads((ROOT / ".mcp.json").read_text())["mcpServers"]["taktloop"] == {
         "type": "http", "url": "http://127.0.0.1:8765/mcp",
-        "headers": {"Authorization": "Bearer ${TAKTLOOP_TOKEN}"}}}}
+        "headers": {"Authorization": "Bearer ${TAKTLOOP_TOKEN}"}}

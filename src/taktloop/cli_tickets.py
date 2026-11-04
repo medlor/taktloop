@@ -43,7 +43,7 @@ def _tickets(ns) -> int:
         return _fail(f"rejected: {e}", 1)
     except CoreUnreachable:
         return _fail(f"ticket stand-in not reachable at {server.url} — "
-                     "start it with `uv run taktloop tickets serve`")
+                     "start the factory with `taktloop up`")
     except TokenRejected:
         return _fail("taktloop: the stand-in refused the token (401)")
     except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError) as e:

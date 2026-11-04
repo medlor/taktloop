@@ -97,11 +97,11 @@ def factory(tmp_path, monkeypatch, request, fake_github):
     request.addfinalizer(lambda: _stop(issuer_proc))  # also when the core fails to start
 
     port = _free_port()
-    workflow = (ROOT / "templates/mvp/factory.yaml").read_text()
+    workflow = (ROOT / "tests/fixtures/m3b/factory.yaml").read_text()
     workflow = workflow[workflow.index("mcp_servers:"):].replace(
         "https://api.githubcopilot.com/mcp/x/actions/readonly", fake_github[0])
     monkeypatch.setenv("TAKTLOOP_GITHUB_TOKEN", "fake")  # the core checks the server is available
-    (tmp_path / "workflow.yaml").write_text((ROOT / "templates/mvp/workflow.yaml").read_text())  # with plan_review
+    (tmp_path / "workflow.yaml").write_text((ROOT / "tests/fixtures/m3b/workflow.yaml").read_text())  # with plan_review
     core_cfg = tmp_path / "factory.yaml"
     core_cfg.write_text(CORE_HEADER.format(port=port, db=tmp_path / "f.db", issuer=issuer) + workflow)
     url = f"http://127.0.0.1:{port}/mcp"

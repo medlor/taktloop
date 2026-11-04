@@ -6,7 +6,8 @@ from pathlib import Path
 
 import yaml
 
-from taktloop.cli_commands import _fail, _install_skill, _issuer, _orchestrator, _serve, _token, run_client
+from taktloop.cli_commands import _fail, _issuer, _orchestrator, _serve, _token, run_client
+from taktloop.cli_setup import _connect, _init, _up
 from taktloop.cli_tickets import _tickets
 from taktloop.config import load_config
 
@@ -96,15 +97,21 @@ def _parser() -> argparse.ArgumentParser:
         cmd.add_argument("id", type=int)
         if name == "close":
             cmd.add_argument("--resolution", default="")
-    s = sub.add_parser("install-skill", parents=[shared], help="copy the taktloop skills into a project")
-    s.add_argument("--dest", type=Path, default=Path(".claude/skills"))
+    i = sub.add_parser("init", help="create a factory directory from the template")
+    i.add_argument("dir", type=Path)
+    i.add_argument("--repo", required=True, metavar="OWNER/REPO", help="the product repo on GitHub")
+    i.add_argument("--checkout", type=Path, required=True, help="the product repo's local checkout")
+    sub.add_parser("up", parents=[shared], help="run issuer, tickets, core and orchestrator until Ctrl-C")
+    cn = sub.add_parser("connect", help="install the skills and .mcp.json entries into a product repo")
+    cn.add_argument("core_url", metavar="CORE_URL")
+    cn.add_argument("--tickets-url")
+    cn.add_argument("--dest", type=Path, default=Path("."))
     return p
 
 
 def main(argv: list[str] | None = None) -> int:
     ns = _parser().parse_args(argv)
-    local = {"install-skill": lambda ns: _install_skill(ns.dest), "issuer": _issuer, "token": _token,
-             "tickets": _tickets}
+    local = {"init": _init, "up": _up, "connect": _connect, "issuer": _issuer, "token": _token, "tickets": _tickets}
     if ns.cmd in local:  # these read no factory.yaml up front
         return local[ns.cmd](ns)
     try:
@@ -116,3 +123,7 @@ def main(argv: list[str] | None = None) -> int:
     if ns.cmd == "orchestrator":
         return _orchestrator(ns, cfg)
     return run_client(ns, cfg)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

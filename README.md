@@ -1,258 +1,51 @@
 taktloop
 
-## M2: try it
+taktloop moves software-development tasks through a workflow you define in
+YAML: idea, triage, design, plan, build, review, CI, merge. Agents (Claude
+Code sessions, headless runs) and people do the steps; taktloop's core keeps
+the state, checks every caller's role from an OAuth token, holds the gates (a
+human approval, a review verdict, CI green checked by the core itself on
+GitHub) and records who did what. Everything goes through MCP tools (and a
+plain HTTP API); taktloop has no agent loop and no tracker of its own.
 
-Every person and agent has a named identity with roles, defined in
-`dev-issuer.yaml`: `tobias` (requester, approver, reviewer, factory owner),
-`agent-a` and `agent-b` (planner, builder, reviewer). Since M3b the dev issuer also knows
-`orchestrator` (orchestrator, verifier) and `reviewer-bot` (reviewer). A small dev issuer hands out
-tokens; the core accepts only calls with a valid token and checks the
-caller's roles on every operation.
+## Quick start
 
-### Setup
-
-```sh
-uv sync                                  # install dependencies
-uv run taktloop issuer init              # signing key + .taktloop/credentials/<identity>.json for each identity
-claude mcp remove taktloop -s local      # only if you registered the core for M1 (see below)
-uv run taktloop install-skill            # copy both skills to .claude/skills/ (taktloop, taktloop-plan-review)
-```
-
-Start the dev issuer and the core, each in its own terminal (keep both open):
+A factory runs in its own directory (the service side); your product repo
+connects to it (the team side).
 
 ```sh
-uv run taktloop issuer                   # dev issuer on 127.0.0.1:8766 (development only)
-uv run taktloop serve                    # core on 127.0.0.1:8765
+uv tool install --editable ./taktloop                    # from a clone of this repo
+taktloop init ../my-factory --repo OWNER/REPO --checkout .   # in your product repo's checkout
+# put a read-only GitHub token after TAKTLOOP_GITHUB_TOKEN= in ../my-factory/.env
+(cd ../my-factory && taktloop up)                        # issuer, tickets, core, orchestrator; Ctrl-C stops
+taktloop connect http://127.0.0.1:8765/mcp --tickets-url http://127.0.0.1:8767/mcp   # skills + .mcp.json
+(cd ../my-factory && taktloop task create "Add a --version flag")
+TAKTLOOP_TOKEN=$(taktloop token agent-a --config ../my-factory/factory.yaml) claude   # say "work on taktloop"
 ```
 
-Claude Code finds the core through the committed `.mcp.json`, which sends
-the token from `TAKTLOOP_TOKEN`. Start every agent session as one identity:
+## Docs
+
+- [Run a factory](docs/user/run-a-factory.md): init, tokens, `up`, status,
+  day-to-day commands, workflow changes, hooks, known limits, the
+  lightweight budget.
+- [Connect your repo](docs/user/connect-your-repo.md): `connect`, sessions,
+  identities, troubleshooting.
+- [Workflow reference](docs/user/workflow-reference.md): every key of
+  `workflow.yaml`, `hooks.yaml` and `factory.yaml`, placeholders, routes,
+  checks and sync. The CI gate is declared as data in `workflow.yaml`
+  (`verify.call` and `verify.check`).
+- Background: [PRD](docs/prd.md), [MVP workflow](docs/mvp-workflow.md),
+  [roles](docs/rbac.md), [ADRs](docs/adr/), [system overview](docs/system-overview.html).
+
+## Development
 
 ```sh
-TAKTLOOP_TOKEN=$(uv run taktloop token agent-a) claude
+uv sync
+uv run pytest            # unit and end-to-end tests (e2e: real issuer, core and `taktloop up` subprocesses)
+uv run pytest -m "not e2e"
 ```
 
-On first start Claude Code asks whether to use the project's `.mcp.json`
-server; accept it. Tokens last 12 hours. When a session's calls fail with 401,
-the token is missing or expired: restart the session the same way to get a
-fresh one.
-
-If `/mcp` shows taktloop as **needs authentication** (or "SDK auth failed ...
-authorization_endpoint"), Claude Code connected without the token and fell
-back to browser OAuth, which the dev issuer doesn't offer. Check, in this
-order: an older registration without the header shadows `.mcp.json`
-(`claude mcp get taktloop` shows its config location; remove it with
-`claude mcp remove taktloop -s local`); `TAKTLOOP_TOKEN` was empty (the
-`taktloop token` command failed); the token expired.
-
-The CLI is a client too. It uses `TAKTLOOP_TOKEN` if set, otherwise
-`--as <identity>`, otherwise `cli.identity` from `factory.yaml` (`tobias`).
-Credentials are read from `.taktloop/credentials/` next to `factory.yaml`
-(next to `dev-issuer.yaml` for `issuer init`), whatever the current
-directory; `--credentials DIR` overrides it.
-
-### The demo
-
-Set `separation: strict` in `factory.yaml` and restart the core. Then:
-
-```sh
-uv run taktloop task create "Add a --version flag to the CLI"   # as tobias; task 1
-```
-
-1. A session as `agent-a`: say **work on taktloop**. It runs design and stops.
-   Approve it: `uv run taktloop approve 1` (or `reject 1 --reason "..."`).
-2. A session as `agent-a` writes the plan and stops. The `plan_review` step opens.
-3. A session as `agent-a` tries to claim `plan_review` and is refused:
-   "strict separation: agent-a completed plan round 1 of task 1".
-4. A session as `agent-b` reviews the plan with the `taktloop-plan-review`
-   skill and returns *pass* or *issues* with findings. On *issues*, the plan
-   reopens for `agent-a` with the findings as `feedback`. After two *issues*
-   verdicts the task waits at `plan_escalation` for an approver.
-5. At the escalation gate, `uv run taktloop approve 1` or
-   `uv run taktloop override 1 --reason "..."` approves the latest plan;
-   `uv run taktloop reject 1 --to plan --reason "..."` sends it back.
-6. `uv run taktloop task show 1` lists every event with identity, roles and
-   executor, for example `agent-b (claude-code)`: the refused claim, both
-   verdicts (`issues → plan`, `issues → plan_escalation`), the core's own
-   `escalate` event and the override.
-
-A call without a token is refused: `curl -i -X POST http://127.0.0.1:8765/mcp`
-answers `401 Unauthorized`.
-
-Now set `separation: off` (the default) and restart the core. One identity
-may plan, review its own plan and revise it; role checks still apply.
-Create task 2 and run its design and plan as `agent-a` as above; a session as
-`agent-a` may now claim its `plan_review`. `tobias` holds the reviewer role,
-so he can also pass the verdict from the CLI: `uv run taktloop review 2 --pass`
-or `--issues "..."`.
-
-### Other harnesses
-
-Codex CLI (`~/.codex/config.toml`):
-
-```toml
-[mcp_servers.taktloop]
-url = "http://127.0.0.1:8765/mcp"
-bearer_token_env_var = "TAKTLOOP_TOKEN"
-```
-
-Pi (remote MCP server entry):
-
-```json
-{"taktloop": {"url": "http://127.0.0.1:8765/mcp",
-              "headers": {"Authorization": "Bearer ${TAKTLOOP_TOKEN}"}}}
-```
-
-Start them the same way, for example `TAKTLOOP_TOKEN=$(uv run taktloop token agent-b) codex`.
-
-### Notes
-
-- **M1 database:** an M1 `.taktloop/factory.db` is refused at start (the
-  schema changed and there are no migrations). Delete `.taktloop/factory.db`
-  and start the core again.
-- The M1 registration `claude mcp add ... taktloop` is no longer needed and
-  must go: it has no `Authorization` header and, registered with local scope,
-  it takes precedence over `.mcp.json`. Remove it with
-  `claude mcp remove taktloop -s local`.
-- **Known limit (accepted for M2):** all credentials files, including
-  `tobias`'s, sit in the repo's `.taktloop/credentials/`. An agent session has
-  a shell, so it could run `taktloop token tobias` and act as the approver,
-  which would also get around strict separation. Only the bridge skill's
-  "never try another identity" stands in the way. Keeping human credentials
-  away from agents (another location, another machine, or a real identity
-  provider) is left for later milestones.
-- `.taktloop/` is gitignored: keys, secret hashes, credentials and the database
-  never land in git.
-
-## M3a: plan to merge, with a CI gate
-
-After the plan passes review, a task goes on to code on this repository:
-**workspace → build → code review → verify → integration approval →
-integrate → done**. `agent-a` and `agent-b` may build, review and verify;
-`tobias` approves at the gates. The transition out of `verify` is a **hard
-gate**: the verifier only names the GitHub Actions run, and the core asks
-GitHub itself, through GitHub's MCP server with its own read-only token,
-whether that run is finished, belongs to the reviewed commit, ran
-`.github/workflows/ci.yml` and succeeded. The check is declared as data
-(`verify.check` in `factory.yaml`).
-
-### The core's GitHub token
-
-The core needs its own fine-grained personal access token (agents never see
-it; they push and look up runs with their own `gh` login):
-
-1. GitHub → Settings → Developer settings → Personal access tokens →
-   Fine-grained tokens → **Generate new token**.
-2. Resource owner `medlor`; Repository access: **Only select repositories**,
-   `medlor/taktloop` only.
-3. Repository permissions: **Actions: Read-only** and **Metadata:
-   Read-only** (added automatically). Nothing else.
-4. Put it in a `.env` file next to `factory.yaml` (gitignored):
-
-   ```sh
-   TAKTLOOP_GITHUB_TOKEN=github_pat_...
-   ```
-
-The core reads `TAKTLOOP_GITHUB_TOKEN` from its environment first, then from
-`.env`. Without it the core still starts (with a warning), and every CI check
-is refused with "the core has no credential for github
-(TAKTLOOP_GITHUB_TOKEN is not set)". The core reads `.env` at startup, so
-restart it after adding or changing the token. The token is never written to
-`factory.yaml`, the database, logs or events.
-
-### The demo
-
-Restart the issuer (agents gained the builder and verifier roles) and the
-core, with `separation: strict` in `factory.yaml`. Start new agent sessions
-for fresh tokens. Pick a small real change and take it through design, plan
-and plan review as in M2; when the plan passes, the task waits at
-`workspace`. Then, saying **work on taktloop** in each session:
-
-1. `agent-a` creates the branch `taktloop/<task id>-<short-name>` from
-   `origin/main`, pushes it and completes `workspace` with the base commit.
-2. `agent-a` builds, pushes and completes `build` with the change commit.
-3. `agent-a` is refused `code_review` (strict); `agent-b` reviews
-   `workspace..change`. *Issues* reopen `build` with the findings; after two
-   *issues* verdicts the task waits at `build_escalation`.
-4. `verify` is run by the orchestrator (M3b, below), not by a session. While
-   the run is going, the core refuses the orchestrator's attempt ("status is
-   in_progress, expected completed"); a newest run of another commit is
-   refused ("head_sha is ..., expected ..."). A red run sends the task back
-   to `build` with `check_failed` feedback naming the run, then through
-   review and verify again. A green run opens `integration_approval`.
-5. `uv run taktloop approve <task>` (as `tobias`, who must not have built
-   the change); `agent-a` merges the change commit into `main`, pushes `main`
-   and completes `integrate` with the merge commit. The task is done.
-6. `uv run taktloop task show <task>` shows the lifecycle: identities,
-   verdicts, every `check` event by `core` (`pass: ...`, `fail: ...`,
-   `mismatch: ...`), `failed → build` for a red round, and the merge commit.
-
-### Known limits (M3a)
-
-- **The CI configuration lives on the task branch.** The gate pins the
-  workflow file (`.github/workflows/ci.yml`), so an always-green workflow
-  added next to it does not count, but a change to `ci.yml` itself that
-  weakens the tests passes the gate. Code review is the only guard for now;
-  protected CI configuration comes later with branch protection.
-- **The merge is not verified.** The core records the merge commit from
-  `integrate` but does not check that `main` contains it or that nothing
-  else was merged. Branch protection with required PR approval is planned
-  for later.
-- Agent steps are still pulled by hand from a session, except the ones M3b
-  pushes (below).
-
-`uv run pytest` runs the tests, including end-to-end tests over a real issuer
-and core (the M3a one against a fake GitHub MCP server). One live test against
-GitHub's real MCP server runs only when `TAKTLOOP_GITHUB_TOKEN` is set in the
-environment or `.env`; CI skips it.
-
-## M3b: the orchestrator
-
-`taktloop orchestrator` is a separate foreground process and a client of the
-core, with its own identity (`orchestrator` in `factory.yaml`). Every
-`tick_seconds` it:
-
-- runs **code steps** (`verify` is now `kind: code`, no LLM): it lists the
-  newest `ci.yml` run on the task branch through GitHub's MCP server and
-  completes the step naming that run; the core still decides, with its own
-  check, as in M3a;
-- **pushes** steps marked `dispatch: push` (`code_review`): it starts a
-  headless Claude Code run as `reviewer-bot`, read-only, which claims and
-  reviews the step;
-- calls the core's `sweep` (expired leases return their steps to open) and
-  reports **stalls** (`report_stall` events, shown by `taktloop task list` and `taktloop task show`).
-
-Setup on top of M3a: create the two new identities with
-`uv run taktloop issuer init` (it adds the missing credentials files), restart
-the issuer, and re-install the bridge skill with `uv run taktloop install-skill`
-(the headless run loads `.claude/skills/taktloop/SKILL.md`). The core and the
-orchestrator read `factory.yaml` only at start, so restart both after editing it.
-Then start the three processes, each in its own terminal:
-
-```sh
-uv run taktloop issuer
-uv run taktloop serve
-uv run taktloop orchestrator             # reads orchestrator: in factory.yaml; Ctrl-C stops it
-```
-
-The orchestrator reads `TAKTLOOP_GITHUB_TOKEN` like the core (environment,
-then `.env` next to `factory.yaml`); it is the same read-only token for now.
-
-**Headless auth rule.** Before each start the orchestrator runs
-`claude auth status`. With a `claude.ai` subscription login it removes
-`ANTHROPIC_API_KEY` from the child's environment (Claude Code would prefer
-the key over the login); otherwise it keeps `ANTHROPIC_API_KEY` if set; with
-neither, the start fails and counts towards the stall rule.
-
-**Run logs.** Each headless run writes stdout and stderr to
-`.taktloop/runs/<step_id>-<n>.log` (gitignored); the orchestrator's own log
-line names the file. The runs use `--permission-mode dontAsk`, may read files
-and run `git diff|log|show|rev-parse`, and cannot edit or write. They start
-with `--setting-sources project,local`, so they ignore your user-level Claude
-settings (and any allow rules in them), and they cannot read `.taktloop/` or
-`.env`. Known limit: `git diff|log|show` accept `--output=<file>`, which is
-still a write path. A running child keeps its own session, so Ctrl-C on the
-orchestrator does not kill it.
-
-Because `verify` is no longer a session step, `agent-a` and `agent-b` lost the
-`verifier` role; only `orchestrator` holds it.
+One live test against GitHub's real MCP server runs only when
+`TAKTLOOP_GITHUB_TOKEN` is set in the environment or in `.env`; CI skips it.
+The tests written against the M3b workflow use a frozen copy in
+`tests/fixtures/m3b/`; the shipped template is `templates/mvp/`.

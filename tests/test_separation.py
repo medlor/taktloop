@@ -7,9 +7,9 @@ from taktloop.models import ArtifactIn
 from taktloop.separation import Record, approved_step, check_approval, check_claim
 from taktloop.service import Caller, Rejected, Service
 from taktloop.workflow import parse_workflow
-from test_service_review import ROOT
+from test_service_review import M3B
 
-WF = load_config(ROOT / "factory.yaml").workflow
+WF = load_config(M3B / "factory.yaml").workflow
 A, B, T = (Caller(s, frozenset((*ALL_ROLES, "builder", "verifier"))) for s in ("agent-a", "agent-b", "tobias"))
 
 
@@ -129,7 +129,7 @@ def test_off_allows_one_identity_to_do_everything(off):
 
 def test_superseded_run_is_not_a_completion(store, clock):
     """A plan round cut short by an override was never completed: its claimer may still approve."""
-    raw = yaml.safe_load((ROOT / "workflow.yaml").read_text())
+    raw = yaml.safe_load((M3B / "workflow.yaml").read_text())
     raw["steps"]["plan_review"]["on_pass"] = "release"
     raw["steps"]["release"] = {"kind": "human_gate", "role": "approver", "on_approve": "done",
                                "on_reject": "plan"}

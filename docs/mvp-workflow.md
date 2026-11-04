@@ -57,11 +57,14 @@ The prompt is small and lives with taktloop (as part of the bridge skill or as i
 
 **Execution mode without a human.** writing-plans normally asks the human to review the plan and choose an execution mode. In the factory, the bridge skill tells the planner not to wait. The execution mode (subagent-driven or inline) comes from the factory's configuration.
 
-Short routes from triage **[proposal]**:
+Routes from triage, **as built in M4**. Before triage, the orchestrator opens the task's ticket (the `open_ticket` code step). Triage is a pushed headless step: the orchestrator starts a read-only run as `triage-bot`, which uses the `taktloop-triage` skill and completes the step with one route and a one-line reason:
 
-- **quick task** (for example "make the icon blue"): 6 → 7 → 8 → 9.
-- **small change:** a short design agreed in chat, then 4 → 4a → 9.
+- **quick** (for example "make the icon blue"): straight to workspace, 5 → 9. With no plan, build implements the request and code review checks against it. Code review, CI green and the integration approval still hold.
+- **small:** straight to plan, 4 → 9. With no design doc, the plan is written from the request and plan review checks it against the request.
 - **project:** the full path 3 → 9.
+- **park:** the request isn't ready or triage can't tell. The task waits at the `triage_decision` gate, where an approver picks one of the three routes or `cancel` (`taktloop route <task> <route> --reason ...`). Parking is never a backlog: a gate nobody decides within `stall_after_minutes` is reported as stalled.
+
+An approver can also set the route at intake (`taktloop task create ... --route quick`); the ticket is still opened first and triage is then skipped. The route and its reason are in the task's history.
 
 ## 3. Skills outside the delivery flow
 

@@ -135,8 +135,9 @@ def test_config_parsing(tmp_path):
     assert cfg.token_lifetime == timedelta(hours=12)
     assert cfg.state_dir == tmp_path / "state"
     assert cfg.identities["agent-a"] == ROLES
-    committed = load_issuer_config(Path(__file__).resolve().parents[1] / "dev-issuer.yaml")
-    assert set(committed.identities) == {"tobias", "agent-a", "agent-b", "orchestrator", "reviewer-bot"}
+    shipped = load_issuer_config(Path(__file__).resolve().parents[1] / "templates/mvp/dev-issuer.yaml")
+    assert set(shipped.identities) == {"tobias", "agent-a", "agent-b", "orchestrator", "reviewer-bot",
+                                       "triage-bot", "assistant"}
 
 
 def test_cli_issuer_init(tmp_path, capsys):

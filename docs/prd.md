@@ -150,9 +150,9 @@ The full role model is in [rbac.md](rbac.md).
 | Area | Criterion |
 | --- | --- |
 | Architecture | a simple architecture of **fewer than 10 components**, each clear, small and with one responsibility |
-| Code size | the core is **at most ~3,000 lines** of code |
+| Code size | the MVP is **at most ~4,300 lines** of code under `src/` (raised from ~3,000 for M4, when the ticket stand-in, hooks, triage, live workflow changes, the HTTP API and the setup commands came in) |
 | Dependencies | **at most ~10 runtime dependencies** |
-| Runtime | **one process with a SQLite file**; no broker, no extra services |
+| Runtime | the core is **one process with one SQLite file**; no broker. The stand-ins (dev issuer, ticket stand-in) and the orchestrator are separate processes, started together by `taktloop up` |
 | Code quality | built to software-architecture best practice: small entities, separation of concerns, clear dependency directions, so a newcomer can understand it quickly |
 | Setup | a **new factory is set up in under 30 minutes** |
 | User documentation | **short and easy to understand**: a newcomer gets from zero to a running factory with it alone |

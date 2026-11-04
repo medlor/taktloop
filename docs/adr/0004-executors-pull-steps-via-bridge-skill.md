@@ -88,6 +88,12 @@ Point 4 matters because superpowers chains its skills: after brainstorming, it m
 
 The taktloop orchestrator is a **separate process** (`taktloop orchestrator`), not part of the core. It is an ordinary MCP client of the core with its own identity and role, and uses the core's tools only (`sweep`, `report_stall`, `claim_step`, `complete_step`, ...). It runs code steps, starts headless executors for steps marked `dispatch: push`, and reports stalls; the core keeps deciding every gate. A headless executor is told its step in the prompt ("work on taktloop step <id>") and the bridge skill claims exactly that step.
 
+## Implementation note (M4): hooks
+
+Reactions to what happens in the core (mirroring a task's step into its ticket, closing the ticket when the task ends, a notification on a stall) are **hooks**, fired by the **orchestrator** from the core's event history, not workflow steps. The orchestrator reads `hooks.yaml` next to `factory.yaml` (re-read on change), pages through the core's events with `list_events`, and for each matching event runs one declared MCP call (or one command, the escape hatch). Each hook keeps its own cursor and is at least once, with three attempts on failure; a hook whose server is down waits and catches up in order. A failing hook never blocks a task, and the core still never writes to the outside world. The core gained two events for this, `step_opened` and `task_closed`.
+
+The triage step is a pushed headless step like `code_review`: the orchestrator starts a read-only run as `triage-bot`, which picks a route with the `taktloop-triage` skill.
+
 ## Consequences
 
 **Positive**

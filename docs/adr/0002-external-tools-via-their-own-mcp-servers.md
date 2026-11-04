@@ -119,6 +119,12 @@ Gates that don't need this strength can be marked soft and accept the agent's ju
 
 **[proposal]** taktloop checks this up front: before a factory is staged, it verifies that every MCP server its steps and gates refer to is configured and reachable, and that the tools named in code steps and gate checks exist. If an MCP server becomes unavailable while the factory is running, the affected steps are blocked and the taktloop orchestrator escalates to the factory owner.
 
+## As built in the MVP (M4)
+
+- **The ticket stand-in is its own process**: `taktloop tickets serve`, a small MCP server with its own port (8767), its own SQLite file and its own bearer token (`TAKTLOOP_TICKETS_TOKEN`). Its tools are shaped after Jira (`create_ticket`, `get_ticket`, `update_status`, `close_ticket`, ...). The orchestrator opens a task's ticket in the `open_ticket` code step and keeps its status in line through hooks (ADR 0004); the core never writes to it.
+- **The core's out-of-sync check**: a `sync:` block in `factory.yaml` declares a read (`get_ticket`) and the expected answer (`closed: false`). The orchestrator asks the core (`check_sync`) for every active task at most every `every_minutes`; the core makes the call with its own credential and records `out_of_sync` (and later `in_sync`) once. Moving the ticket never moves the task: only the factory owner decides. In the MVP the core's tickets credential is the same token everyone uses, like the shared GitHub token.
+- **The availability check is implemented**: the core (at startup, and before approving a workflow change) and the orchestrator check that every MCP server the workflow, the sync checks and the hooks name is reachable and has the named tools. While a server is missing, `create_task` is refused naming it, and `taktloop status` shows it.
+
 ## Alternatives considered
 
 - **Permanent default with pluggable backends** (option 2). One stable interface for the agent, but taktloop would have to write and maintain an adapter for every tool. Rejected, unless a lightweight solution makes it nearly free.

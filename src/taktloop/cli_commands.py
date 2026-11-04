@@ -3,7 +3,6 @@
 import json
 import os
 import re
-import shutil
 import socket
 import sys
 from importlib.metadata import version
@@ -183,13 +182,6 @@ def _orchestrator(ns, cfg) -> int:
     return 0
 
 
-def _install_skill(dest: Path) -> int:
-    """Copy both skills (the bridge and taktloop-plan-review) into dest, one directory each."""
-    shutil.copytree(TEMPLATES / "mvp" / "skills", dest, dirs_exist_ok=True)
-    print(dest)
-    return 0
-
-
 def _issuer(ns) -> int:
     from taktloop.issuer.app import build_app  # only the issuer command loads it
     from taktloop.issuer.config import load_issuer_config
@@ -246,7 +238,7 @@ def run_client(ns, cfg) -> int:
     except TokenRejected:
         return _fail("taktloop: token missing or expired; get a new one with taktloop token <identity>")
     except CoreUnreachable:
-        return _fail(f"taktloop core not reachable at {url} — start it with `uv run taktloop serve`")
+        return _fail(f"taktloop core not reachable at {url} — start the factory with `taktloop up`")
     except TokenError as e:
         return _fail(f"taktloop: {e}")
     except Exception as e:  # noqa: BLE001 - anything else is one line, not a traceback

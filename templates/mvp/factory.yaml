@@ -1,13 +1,25 @@
-factory: taktloop
+factory: taktloop                    # the factory name; token scopes read taktloop:<factory>:<role>
 server: {host: 127.0.0.1, port: 8765}
-database: .taktloop/factory.db        # gitignored
+database: .taktloop/factory.db       # gitignored
 auth: {issuer: http://127.0.0.1:8766, audience: taktloop}
-cli: {identity: tobias}
-separation: off                      # off (default) | strict, see 6.4
-mcp_servers:                         # external MCP servers the core itself calls (gate checks)
+cli: {identity: tobias}              # who the CLI runs as (taktloop token <identity> for anyone else)
+separation: off                      # off | strict: nobody reviews or approves their own work
+workflow_file: workflow.yaml         # written by the core; see docs/user/workflow-reference.md
+product: {checkout: ..}              # the product repo's checkout, relative to this file; headless runs start there
+mcp_servers:                         # MCP servers the core and the orchestrator call
   github:
     url: https://api.githubcopilot.com/mcp/x/actions/readonly
     token_env: TAKTLOOP_GITHUB_TOKEN   # read from the environment, then from .env next to this file
+  tickets:                           # the ticket stand-in, `taktloop tickets serve`
+    url: http://127.0.0.1:8767/mcp
+    token_env: TAKTLOOP_TICKETS_TOKEN
+sync:                                # the core's own check that an active task's ticket is still open
+  ticket:
+    mcp_server: tickets
+    tool: get_ticket
+    args: {id: "{{evidence.open_ticket.ticket}}"}
+    expect: {closed: false}
+    every_minutes: 5
 orchestrator:                        # read by `taktloop orchestrator`
   identity: orchestrator
   tick_seconds: 15
