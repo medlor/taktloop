@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -40,15 +40,15 @@ CORE = Caller("core", frozenset())
 
 @dataclass
 class _Ids:
-    """Task/step-run the current operation touched, for its history event."""
+    """Task/step-run the current operation touched, for its history event, and what the core did
+    as a consequence (operation, step run, detail), recorded after it."""
     task_id: int | None = None
     step_run_id: int | None = None
     core_events: list[tuple[str, int | None, dict]] = field(default_factory=list)
-    """What the core did as a consequence (operation, step run, detail), recorded after."""
 
 
 def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class ServiceBase:
@@ -67,8 +67,7 @@ class ServiceBase:
         self._reconcile(workflow)
 
     def _reconcile(self, workflow: Workflow) -> None:
-        """Snapshot the file's workflow: as its own version on first start, as the next version
-        when it differs from the latest snapshot (a hand edit)."""
+        """Snapshot the file's workflow: its own version at first start, the next one after a hand edit."""
         with self._store.transaction() as tx:
             latest, sha = tx.latest_workflow_version(), data_sha(workflow.data)
             if latest is None or latest.sha256 != sha:
@@ -108,9 +107,8 @@ class ServiceBase:
     def _run(self, caller: Caller, operation: str, detail: dict[str, Any],
              body: Callable[[Tx, _Ids], Any], *, writes: bool = True,
              task_id: int | None = None) -> Any:
-        """One transaction per operation; rejections are rolled back, then recorded.
-        Step-bound roles are checked again by the body once it has loaded the step.
-        `task_id`, when the operation names one, files even a role refusal under that task."""
+        """One transaction per operation; rejections are rolled back, then recorded (under `task_id`
+        if given, even a role refusal). The body checks step-bound roles again once it has the step."""
         ids = _Ids(task_id)
         try:
             require(caller, operation)  # before anything else, even lease expiry
@@ -131,8 +129,8 @@ class ServiceBase:
 
     def _separate(self, tx: Tx, task_id: int,
                   rule: Callable[[list[Record]], str | None]) -> None:
-        """In strict mode, refuse with the rule's text if it objects to the task's records.
-        Runs an override closed as superseded were never completed and do not count."""
+        """In strict mode, refuse with the rule's text if it objects to the task's records
+        (runs an override closed as superseded do not count)."""
         if self._separation != "strict":
             return
         refusal = rule([Record(r.step, r.round, r.claimed_by, task_id)
@@ -168,22 +166,28 @@ class ServiceBase:
         _check_owner(run, caller, claim_token)
         return run
 
+    def _task(self, tx: Tx, ids: _Ids, task_id: int) -> TaskRow:
+        if (task := tx.get_task(task_id)) is None:
+            raise Rejected(f"unknown task {task_id}")
+        ids.task_id = task_id
+        return task
+
+    def _current(self, tx: Tx, task_id: int) -> StepRunRow | None:
+        """The task's open or claimed run, its lease expired if overdue."""
+        run = tx.current_step_run(task_id)
+        return self._expire(tx, run) if run else None
+
     def _summary(self, tx: Tx, task: TaskRow) -> TaskSummary:
-        run = None
-        if task.status == "active":
-            run = tx.current_step_run(task.id)
-            run = self._expire(tx, run) if run else None
+        run = self._current(tx, task.id) if task.status == "active" else None
         wf = self._wf_of(tx, task.id)
-        return TaskSummary(
-            id=task.id, title=task.title, status=task.status,
-            current_step=run.step if run else None, step_id=run.id if run else None,
-            waiting_for="cancelled" if task.status == "cancelled" else waiting_for(
-                wf.step(run.step) if run else None,
-                run.status if run else "open", _holder(run) if run else None,
-                run.lease_expires_at if run else None,
-                wf.escalating_review(run.step) if run else None,
-                _stall_reason(tx, run) if run else None,
-                "; ".join(self._sync_flags(tx, task.id).values()) or None))
+        if run is None:  # only active tasks have a current run
+            waiting = "cancelled" if task.status == "cancelled" else "done"
+        else:
+            waiting = waiting_for(wf.step(run.step), run.status, _holder(run), run.lease_expires_at,
+                                  wf.escalating_review(run.step), _stall_reason(tx, run),
+                                  "; ".join(self._sync_flags(tx, task.id).values()) or None)
+        return TaskSummary(id=task.id, title=task.title, status=task.status, waiting_for=waiting,
+                           current_step=run.step if run else None, step_id=run.id if run else None)
 
     def _sync_flags(self, tx: Tx, task_id: int) -> dict[str, str]:
         """name -> reason of each out-of-sync flag: the latest out_of_sync/in_sync event per name."""
@@ -231,12 +235,10 @@ class ServiceBase:
                       for k, v in (r.evidence or {}).items()}
 
     def _artifacts(self, tx: Tx, task_id: int) -> list[Artifact]:
-        out = []
-        for a in tx.list_artifacts(task_id):
-            run = tx.get_step_run(a.step_run_id)
-            out.append(Artifact(name=a.name, path=a.path, commit=a.commit, branch=a.branch,
-                                step=run.step, round=run.round))
-        return out
+        runs = {r.id: r for r in tx.list_step_runs(task_id)}
+        return [Artifact(name=a.name, path=a.path, commit=a.commit, branch=a.branch,
+                         step=runs[a.step_run_id].step, round=runs[a.step_run_id].round)
+                for a in tx.list_artifacts(task_id)]
 
     def _claim(self, tx: Tx, run: StepRunRow) -> Claim:
         expires = self._clock() + self._lease

@@ -70,17 +70,13 @@ class WorkflowOps(ServiceBase):
         return self._edit(caller, "put_step", {"step": name}, change)
 
     def remove_step(self, caller: Caller, name: str) -> WorkflowView:
-        def change(data: dict) -> None:
-            data["steps"].pop(name, None)
-        return self._edit(caller, "remove_step", {"step": name}, change)
+        return self._edit(caller, "remove_step", {"step": name}, lambda data: data["steps"].pop(name, None))
 
     def set_start(self, caller: Caller, name: str) -> WorkflowView:
         return self._edit(caller, "set_start", {"step": name}, lambda data: data.update(start=name))
 
     def discard_draft(self, caller: Caller) -> None:
-        def body(tx: Tx, ids: _Ids) -> None:
-            tx.delete_draft()
-        self._run(caller, "discard_draft", {}, body)
+        self._run(caller, "discard_draft", {}, lambda tx, ids: tx.delete_draft())
 
     def approve_workflow(self, caller: Caller, base_version: int) -> WorkflowView:
         with self._store.transaction() as tx:

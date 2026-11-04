@@ -1,13 +1,12 @@
 """The ``taktloop`` command line: argument parsing and dispatch (handlers live in cli_commands)."""
 
 import argparse
-import sys
 from importlib.metadata import version
 from pathlib import Path
 
 import yaml
 
-from taktloop.cli_commands import _install_skill, _issuer, _orchestrator, _serve, _token, run_client
+from taktloop.cli_commands import _fail, _install_skill, _issuer, _orchestrator, _serve, _token, run_client
 from taktloop.cli_tickets import _tickets
 from taktloop.config import load_config
 
@@ -104,19 +103,14 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     ns = _parser().parse_args(argv)
-    if ns.cmd == "install-skill":
-        return _install_skill(ns.dest)
-    if ns.cmd == "issuer":
-        return _issuer(ns)
-    if ns.cmd == "token":
-        return _token(ns)
-    if ns.cmd == "tickets":
-        return _tickets(ns)
+    local = {"install-skill": lambda ns: _install_skill(ns.dest), "issuer": _issuer, "token": _token,
+             "tickets": _tickets}
+    if ns.cmd in local:  # these read no factory.yaml up front
+        return local[ns.cmd](ns)
     try:
         cfg = None if (ns.url and ns.cmd not in ("serve", "orchestrator")) else load_config(ns.config)
     except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError) as e:
-        print(f"taktloop: {e}", file=sys.stderr)
-        return 2
+        return _fail(f"taktloop: {e}")
     if ns.cmd == "serve":
         return _serve(cfg)
     if ns.cmd == "orchestrator":

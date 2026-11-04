@@ -5,15 +5,13 @@ from __future__ import annotations
 from taktloop.checks import CheckUnavailable, ToolFailed, compare, describe, resolve
 from taktloop.models import TaskSummary
 from taktloop.ops_base import CORE, Caller, ServiceBase, _Ids
-from taktloop.rules import Rejected
 from taktloop.store import Tx
 
 
 class SyncOps(ServiceBase):
     def check_sync(self, caller: Caller, task_id: int) -> TaskSummary:
         def read(tx: Tx, ids: _Ids) -> dict:
-            if (task := tx.get_task(task_id)) is None:
-                raise Rejected(f"unknown task {task_id}")
+            task = self._task(tx, ids, task_id)
             values, out = self._values(tx, task_id), {}
             for name, cfg in self._sync.items():
                 try:

@@ -52,9 +52,7 @@ def _event_detail(e: dict) -> str:
 def _event_note(e: dict) -> str:
     """Last history column: the rejection reason first, then what the call carried."""
     detail = _event_detail(e)
-    if not e["reason"]:
-        return detail
-    return f"{e['reason']} ({detail})" if detail else e["reason"]
+    return f"{e['reason']} ({detail})" if e["reason"] and detail else e["reason"] or detail
 
 
 def render_task_detail(d: dict) -> str:
@@ -78,21 +76,13 @@ def render_task_detail(d: dict) -> str:
 
 
 def render_task_list(d: dict) -> str:
-    if not d["tasks"]:
-        return "no tasks"
-    return "\n".join(
-        f"#{t['id']} {t['title']} [{t['status']}]  {t['waiting_for']}" for t in d["tasks"]
-    )
+    return "\n".join(f"#{t['id']} {t['title']} [{t['status']}]  {t['waiting_for']}"
+                     for t in d["tasks"]) or "no tasks"
 
 
 def render_steps(d: dict) -> str:
-    if not d["steps"]:
-        return "no open steps"
-    return "\n".join(
-        f"step {s['step_id']}  task #{s['task_id']} {s['task_title']}  {s['step']} "
-        f"(round {s['round']}, skill {s['skill']})"
-        for s in d["steps"]
-    )
+    return "\n".join(f"step {s['step_id']}  task #{s['task_id']} {s['task_title']}  {s['step']} "
+                     f"(round {s['round']}, skill {s['skill']})" for s in d["steps"]) or "no open steps"
 
 
 def render_status(d: dict) -> str:

@@ -1,7 +1,5 @@
-"""Validate the bearer tokens of the configured issuer and map their scopes to roles.
-
-The issuer is reached over HTTP only: its RFC 8414 metadata (or OIDC discovery) names the JWKS.
-"""
+"""Validate the configured issuer's bearer tokens and map their scopes to roles.
+The issuer is reached over HTTP only: its RFC 8414 metadata (or OIDC discovery) names the JWKS."""
 
 import json
 import logging

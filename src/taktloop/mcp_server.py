@@ -1,7 +1,7 @@
 """MCP tool surface: thin wrappers over Service. No business logic here."""
 
 from collections.abc import Callable
-from functools import wraps
+from functools import partial, wraps
 from typing import Literal
 
 from mcp.server.auth.middleware.auth_context import get_access_token
@@ -10,19 +10,8 @@ from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
 from taktloop.auth import JwtVerifier, roles_from_scopes
-from taktloop.models import (
-    ArtifactIn,
-    Claim,
-    EventFeed,
-    FactoryStatus,
-    OpenStepList,
-    SweptStepList,
-    StepContext,
-    TaskDetail,
-    TaskList,
-    TaskSummary,
-    WorkflowView,
-)
+from taktloop.models import (ArtifactIn, Claim, EventFeed, FactoryStatus, OpenStepList, StepContext,
+                             SweptStepList, TaskDetail, TaskList, TaskSummary, WorkflowView)
 from taktloop.service import Caller, Rejected, Service
 
 INSTRUCTIONS = (
@@ -33,8 +22,7 @@ INSTRUCTIONS = (
 
 
 def caller_from(ctx: Context, factory: str) -> Caller:
-    """The Caller of the validated bearer token: subject from `sub`, roles from this
-    factory's scopes, executor from the client's name (None without clientInfo)."""
+    """The token's Caller: subject `sub`, this factory's scope roles, executor the client's name (or None)."""
     token = get_access_token()
     if token is None or not token.subject:
         raise ToolError("not authenticated")
@@ -45,29 +33,24 @@ def caller_from(ctx: Context, factory: str) -> Caller:
 
 def _mapped(fn: Callable) -> Callable:
     """Turn service rejections into MCP tool errors carrying the reason."""
-
     @wraps(fn)
     def wrapper(*args, **kwargs):
         try:
             return fn(*args, **kwargs)
         except Rejected as e:
             raise ToolError(e.reason) from e
-
     return wrapper
 
 
 def build_server(service: Service, factory: str, verifier: JwtVerifier | None,
                  resource_url: str | None) -> MCPServer:
-    """With a verifier, the SDK refuses requests without a valid bearer token (HTTP 401).
-    Without one (in-memory tests), every tool still requires a token in the auth context."""
-    auth = None
-    if verifier is not None:
-        auth = AuthSettings(issuer_url=verifier.issuer, resource_server_url=resource_url,
-                            validate_token_resource=False)
+    """With a verifier, the SDK answers 401 without a valid bearer token; without one (in-memory
+    tests), every tool still requires a token in the auth context."""
+    auth = AuthSettings(issuer_url=verifier.issuer, resource_server_url=resource_url,
+                        validate_token_resource=False) if verifier else None
     server = MCPServer("taktloop", instructions=INSTRUCTIONS, token_verifier=verifier, auth=auth)
 
-    def caller(ctx: Context) -> Caller:
-        return caller_from(ctx, factory)
+    caller = partial(caller_from, factory=factory)
 
     def tool(fn: Callable) -> Callable:
         return server.tool()(_mapped(fn))
@@ -109,15 +92,9 @@ def build_server(service: Service, factory: str, verifier: JwtVerifier | None,
         return service.heartbeat(caller(ctx), step_id, claim_token)
 
     @tool
-    def complete_step(
-        ctx: Context,
-        step_id: int,
-        claim_token: str,
-        artifacts: list[ArtifactIn] | None = None,
-        outcome: str = "completed",
-        findings: str | None = None,
-        evidence: dict[str, str] | None = None,
-    ) -> TaskSummary:
+    def complete_step(ctx: Context, step_id: int, claim_token: str, artifacts: list[ArtifactIn] | None = None,
+                      outcome: str = "completed", findings: str | None = None,
+                      evidence: dict[str, str] | None = None) -> TaskSummary:
         """Complete a claimed step. Work steps: outcome 'completed' with artifacts (repo-relative
         path, full commit SHA, branch). Review steps: outcome 'pass' or 'issues', no artifacts,
         findings required for 'issues'. Steps with a check: outcome 'completed' with evidence
@@ -126,25 +103,14 @@ def build_server(service: Service, factory: str, verifier: JwtVerifier | None,
                                      findings, evidence)
 
     @tool
-    def release_step(
-        ctx: Context,
-        step_id: int,
-        reason: str,
-        claim_token: str | None = None,
-        force: bool = False,
-    ) -> TaskSummary:
+    def release_step(ctx: Context, step_id: int, reason: str, claim_token: str | None = None,
+                     force: bool = False) -> TaskSummary:
         """Give a claimed step back so another session can claim it."""
         return service.release_step(caller(ctx), step_id, reason, claim_token, force)
 
     @tool
-    def decide_gate(
-        ctx: Context,
-        task_id: int,
-        decision: Literal["approve", "reject", "route"],
-        gate: str | None = None,
-        reason: str | None = None,
-        target: str | None = None,
-    ) -> TaskSummary:
+    def decide_gate(ctx: Context, task_id: int, decision: Literal["approve", "reject", "route"],
+                    gate: str | None = None, reason: str | None = None, target: str | None = None) -> TaskSummary:
         """Approve or reject the human gate a task is waiting at; a reject goes back to
         `target` (one of the gate's on_reject steps, default the first). A gate with routes
         takes only decision 'route': `target` is the route name, `reason` is required."""

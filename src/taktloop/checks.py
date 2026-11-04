@@ -2,7 +2,7 @@
 
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -43,19 +43,18 @@ def _args(raw: Any, what: str) -> dict[str, Any]:
     return dict(raw or {})
 
 
-def _server_tool(raw: Any, what: str) -> None:
+def _server_tool(raw: Any, what: str, fields: Iterable[str]) -> None:
     if not isinstance(raw, dict):
         raise ValueError(f"{what} must be a mapping")
     for field in ("mcp_server", "tool"):
         if not isinstance(raw.get(field), str) or not raw[field]:
             raise ValueError(f"{what} needs {field} (a string)")
+    if unknown := sorted(set(raw) - set(fields)):
+        raise ValueError(f"unknown {what} field {unknown[0]!r}")
 
 
 def parse_call(raw: Any) -> CallDecl:
-    _server_tool(raw, "call")
-    unknown = sorted(set(raw) - {"mcp_server", "tool", "args", "evidence"})
-    if unknown:
-        raise ValueError(f"unknown call field {unknown[0]!r}")
+    _server_tool(raw, "call", ("mcp_server", "tool", "args", "evidence"))
     evidence = raw.get("evidence")
     if (not isinstance(evidence, dict) or not evidence
             or not all(isinstance(k, str) and isinstance(v, str) for k, v in evidence.items())):
@@ -64,10 +63,7 @@ def parse_call(raw: Any) -> CallDecl:
 
 
 def parse_check(raw: Any) -> CheckDecl:
-    _server_tool(raw, "check")
-    unknown = sorted(set(raw) - set(FIELDS))
-    if unknown:
-        raise ValueError(f"unknown check field {unknown[0]!r}")
+    _server_tool(raw, "check", FIELDS)
     expect = _strings(raw.get("expect"), "expect")
     if not expect:
         raise ValueError("check needs a non-empty expect mapping")

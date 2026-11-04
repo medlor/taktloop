@@ -66,20 +66,12 @@ class Service(StepOps, GateOps, OrchestratorOps, WorkflowOps, SyncOps):
 
     def get_task(self, caller: Caller, task_id: int) -> TaskDetail:
         def body(tx: Tx, ids: _Ids) -> TaskDetail:
-            task = tx.get_task(task_id)
-            if task is None:
-                raise Rejected(f"unknown task {task_id}")
-            ids.task_id = task_id
+            task = self._task(tx, ids, task_id)
             summary = self._summary(tx, task)
-            steps: dict[int | None, str | None] = {None: None}
-            history = []
-            for e in tx.list_events(task_id):
-                if e.step_run_id not in steps:
-                    steps[e.step_run_id] = tx.get_step_run(e.step_run_id).step
-                history.append(Event(at=e.at, subject=e.subject, roles=e.roles,
-                                     executor=e.executor, operation=e.operation,
-                                     step=steps[e.step_run_id], result=e.result,
-                                     reason=e.reason, detail=e.detail))
+            steps = {r.id: r.step for r in tx.list_step_runs(task_id)}
+            history = [Event(at=e.at, subject=e.subject, roles=e.roles, executor=e.executor,
+                             operation=e.operation, step=steps.get(e.step_run_id), result=e.result,
+                             reason=e.reason, detail=e.detail) for e in tx.list_events(task_id)]
             step = self._wf_of(tx, task_id).step(summary.current_step) if summary.current_step else None
             return TaskDetail(**summary.model_dump(), request=task.request,
                               description=step.description if step else "",

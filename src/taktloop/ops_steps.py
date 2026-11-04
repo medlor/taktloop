@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import secrets
 
-from taktloop.checks import (CheckDecl, CheckUnavailable, Mismatch, compare, describe, lookup,
-                             resolve)
+from taktloop.checks import CheckDecl, CheckUnavailable, Mismatch, compare, describe, lookup, resolve
 from taktloop.models import ArtifactIn, Claim, TaskSummary
 from taktloop.ops_base import CORE, Caller, ServiceBase, _check_owner, _holder, _Ids
 from taktloop.permissions import require
@@ -44,8 +43,8 @@ class StepOps(ServiceBase):
     def complete_step(self, caller: Caller, step_id: int, claim_token: str, outcome: str,
                       artifacts: list[ArtifactIn], findings: str | None = None,
                       evidence: dict[str, str] | None = None) -> TaskSummary:
-        """Work steps: outcome `completed` with artifacts. Review steps: `pass` or `issues`,
-        no artifacts, findings required for `issues`. Steps with a check need evidence (_check)."""
+        """Work steps: `completed` with artifacts. Review steps: `pass`, or `issues` with findings.
+        Steps with a check need evidence (_check)."""
         evidence = evidence or {}
 
         def validate(tx: Tx, ids: _Ids) -> tuple[int, CheckDecl | None]:
@@ -114,9 +113,11 @@ class StepOps(ServiceBase):
                 raise CheckUnavailable("no checker configured")
             result = self._checker(decl.mcp_server, decl.tool, dict(decl.args))
         except CheckUnavailable as e:
+            reason = f"CI check could not run: {e}"
+
             def refuse(tx: Tx, ids: _Ids) -> None:
                 ids.task_id, ids.step_run_id = task_id, step_id
-                raise Rejected(f"CI check could not run: {e}")
+                raise Rejected(reason)
             return self._run(caller, "complete_step", detail, refuse)
         found = compare(decl.match, result), compare(decl.expect, result)
         ran = ", ".join(f"{k}={v}" for k, v in evidence.items())

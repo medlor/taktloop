@@ -133,24 +133,14 @@ def parse_step(name: str, raw: Any) -> Step:
         if not routes and (not approve or not reject):
             raise WorkflowError(f"step {name!r}: gates need on_approve and on_reject")
         review = {}
-    return Step(
-        name=name,
-        kind=kind,
-        role=str(role),
-        skill=skill,
-        instructions=" ".join(str(raw.get("instructions") or "").split()),
-        required_artifacts=artifacts,
-        next=nxt,
-        on_approve=approve,
-        on_reject=reject,
-        dispatch=dispatch,
-        push_identity=identity,
-        description=" ".join(str(raw.get("description") or "").split()),
-        routes=routes,
-        approves=approves,
-        **review,
-        **extra,
-    )
+    return Step(name=name, kind=kind, role=str(role), skill=skill, instructions=_text(raw, "instructions"),
+                required_artifacts=artifacts, next=nxt, on_approve=approve, on_reject=reject,
+                dispatch=dispatch, push_identity=identity, description=_text(raw, "description"),
+                routes=routes, approves=approves, **review, **extra)
+
+
+def _text(raw: dict, key: str) -> str:
+    return " ".join(str(raw.get(key) or "").split())
 
 
 def _parse_routes(name: str, raw: dict, kind: str) -> tuple[dict[str, str], str | None]:
@@ -198,7 +188,7 @@ def _parse_code_step(name: str, raw: dict) -> Step:
         raise WorkflowError(f"step {name!r}: call.evidence must produce exactly the step's evidence keys")
     extra["evidence"] = extra["evidence"] or tuple(call.evidence)
     return Step(name, "code", str(raw["role"]), None, "", (), raw["next"], None, (), call=call,
-                description=" ".join(str(raw.get("description") or "").split()), **extra)
+                description=_text(raw, "description"), **extra)
 
 
 def _parse_check_fields(name: str, raw: dict, kind: str) -> dict:

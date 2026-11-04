@@ -104,24 +104,13 @@ def load_config(path: Path) -> FactoryConfig:
             raise WorkflowError(f"{path.name}: orchestrator needs an identity")
         keys = ("tick_seconds", "code_retry_seconds", "stall_after_minutes", "max_lease_expiries")
         orch = OrchestratorConfig(str(orch["identity"]), **{k: int(orch[k]) for k in keys if k in orch})
+    root = path.parent
     return FactoryConfig(
-        factory=str(data.get("factory") or path.resolve().parent.name),
-        host=str(server.get("host", "127.0.0.1")),
-        port=int(server.get("port", 8765)),
-        database=path.parent / data.get("database", ".taktloop/factory.db"),
-        workflow=workflow,
-        lease_minutes=int(data.get("lease_minutes", 30)),
-        auth_issuer=str(auth["issuer"]),
-        auth_audience=str(auth["audience"]),
-        cli_identity=(data.get("cli") or {}).get("identity"),
-        separation=separation,
-        credentials=path.parent / ".taktloop/credentials",
-        mcp_servers=servers,
-        env_file=path.parent / ".env",
-        orchestrator=orch,
-        root=path.parent,
-        workflow_path=workflow_path,
-        product_checkout=path.parent / (data.get("product") or {}).get("checkout", "."),
-        hooks_path=path.parent / "hooks.yaml",
-        sync=sync,
-    )
+        factory=str(data.get("factory") or path.resolve().parent.name), host=str(server.get("host", "127.0.0.1")),
+        port=int(server.get("port", 8765)), database=root / data.get("database", ".taktloop/factory.db"),
+        workflow=workflow, lease_minutes=int(data.get("lease_minutes", 30)), auth_issuer=str(auth["issuer"]),
+        auth_audience=str(auth["audience"]), cli_identity=(data.get("cli") or {}).get("identity"),
+        separation=separation, credentials=root / ".taktloop/credentials", mcp_servers=servers,
+        env_file=root / ".env", orchestrator=orch, root=root, workflow_path=workflow_path,
+        product_checkout=root / (data.get("product") or {}).get("checkout", "."),
+        hooks_path=root / "hooks.yaml", sync=sync)

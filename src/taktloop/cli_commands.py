@@ -35,6 +35,12 @@ class TokenRejected(Exception):
     """The core answered 401: the bearer token is missing, invalid or expired."""
 
 
+def _fail(message: str, code: int = 2) -> int:
+    """Print `message` to stderr and return the exit code."""
+    print(message, file=sys.stderr)
+    return code
+
+
 def _only_os_errors(e: BaseException) -> bool:
     if isinstance(e, BaseExceptionGroup):
         return all(_only_os_errors(s) for s in e.exceptions)
@@ -79,8 +85,8 @@ async def _call_tool(url: str, name: str, args: dict, token: str, client: str = 
 
     http.event_hooks["response"].append(note_401)
     try:
-        async with Client(streamable_http_client(url, http_client=http), client_info=info) as client:
-            result = await client.call_tool(name, args)
+        async with Client(streamable_http_client(url, http_client=http), client_info=info) as session:
+            result = await session.call_tool(name, args)
     except BaseException as e:
         if unauthorized:
             raise TokenRejected("the core answered 401") from None
@@ -165,15 +171,13 @@ def _serve(cfg) -> int:
     try:
         serve.run(cfg)
     except (SchemaMismatch, WorkflowError) as e:  # an old database or a broken workflow.yaml
-        print(f"taktloop: {e}", file=sys.stderr)
-        return 2
+        return _fail(f"taktloop: {e}")
     return 0
 
 
 def _orchestrator(ns, cfg) -> int:
     if cfg.orchestrator is None:
-        print(f"taktloop: {ns.config.name} has no orchestrator block", file=sys.stderr)
-        return 2
+        return _fail(f"taktloop: {ns.config.name} has no orchestrator block")
     from taktloop import orchestrator  # the loop; client commands never load it
     orchestrator.run(cfg)
     return 0
@@ -200,8 +204,7 @@ def _issuer(ns) -> int:
             return 0
         app = build_app(cfg)
     except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError) as e:
-        print(f"taktloop: {e}", file=sys.stderr)
-        return 2
+        return _fail(f"taktloop: {e}")
     import uvicorn
 
     print("WARNING: taktloop dev issuer, for development only", file=sys.stderr)
@@ -213,8 +216,7 @@ def _token(ns) -> int:
     try:
         print(fetch_token(ns.identity, ns.credentials or ns.config.parent / ".taktloop/credentials"))
     except TokenError as e:
-        print(f"taktloop: {e}", file=sys.stderr)
-        return 2
+        return _fail(f"taktloop: {e}")
     return 0
 
 
@@ -231,33 +233,25 @@ def _bearer(ns, cfg) -> str:
 def run_client(ns, cfg) -> int:
     url = ns.url or cfg.url
     if not _valid_url(url):
-        print(f"taktloop: invalid URL {url}", file=sys.stderr)
-        return 2
+        return _fail(f"taktloop: invalid URL {url}")
     try:
         tool, args, render = _request(ns)
         special = _review if ns.cmd == "review" else _approve_workflow if tool == "approve_workflow" else None
         call = (special, url, ns) if special else (_call_tool, url, tool, args)
         result = anyio.run(*call, _bearer(ns, cfg))
     except ToolRejected as e:
-        print(f"rejected: {e}", file=sys.stderr)
-        return 1
+        return _fail(f"rejected: {e}", 1)
     except (OSError, yaml.YAMLError) as e:  # the file given to `workflow put`
-        print(f"taktloop: {' '.join(str(e).split())}", file=sys.stderr)
-        return 2
+        return _fail(f"taktloop: {' '.join(str(e).split())}")
     except TokenRejected:
-        print("taktloop: token missing or expired; get a new one with taktloop token <identity>", file=sys.stderr)
-        return 2
+        return _fail("taktloop: token missing or expired; get a new one with taktloop token <identity>")
     except CoreUnreachable:
-        print(f"taktloop core not reachable at {url} — start it with `uv run taktloop serve`", file=sys.stderr)
-        return 2
+        return _fail(f"taktloop core not reachable at {url} — start it with `uv run taktloop serve`")
     except TokenError as e:
-        print(f"taktloop: {e}", file=sys.stderr)
-        return 2
-    except Exception as e:
+        return _fail(f"taktloop: {e}")
+    except Exception as e:  # noqa: BLE001 - anything else is one line, not a traceback
         while isinstance(e, BaseExceptionGroup):
             e = e.exceptions[0]
-        msg = " ".join(f"{type(e).__name__}: {e}".split())
-        print(f"taktloop: {msg}", file=sys.stderr)
-        return 2
+        return _fail(f"taktloop: {' '.join(f'{type(e).__name__}: {e}'.split())}")
     print(json.dumps(result, indent=2) if ns.json else render(result))
     return 0

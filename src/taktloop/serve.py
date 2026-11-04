@@ -22,8 +22,8 @@ from taktloop.workflow_file import data_sha, read as read_workflow, write as wri
 
 
 class _Server(uvicorn.Server):
-    """`uv run` forwards the terminal's Ctrl-C, so one keypress arrives twice;
-    uvicorn would read the second as "force quit" and skip the app's shutdown."""
+    """`uv run` forwards Ctrl-C, so one keypress arrives twice; uvicorn would read the second
+    as "force quit" and skip the app's shutdown."""
 
     _last_sigint = float("-inf")
 
@@ -35,10 +35,6 @@ class _Server(uvicorn.Server):
             if duplicate:
                 return
         super().handle_exit(sig, frame)
-
-
-def _cancelled(record: logging.LogRecord) -> bool:
-    return bool(record.exc_info) and isinstance(record.exc_info[1], asyncio.CancelledError)
 
 
 def _log_unauthenticated(app):
@@ -76,7 +72,7 @@ def prepare(cfg: FactoryConfig) -> Service:
     store = Store(cfg.database)
     avail = Availability(make_tool_lister(cfg.mcp_servers, os.environ, read_dotenv(cfg.env_file)),
                          lambda: needed_tools(service.live, ("check",), cfg.sync))
-    tools_check = lambda wf: avail.check(needed_tools(wf, ("check", "call")))  # noqa: E731
+    tools_check = lambda wf: avail.check(needed_tools(wf, ("check", "call")))
     with store.transaction() as tx:
         latest = tx.latest_workflow_version()
     if latest and latest.sha256 != data_sha(workflow.data) and (refusal := tools_check(workflow)):
@@ -111,7 +107,8 @@ def serve_app(app, host: str, port: int) -> None:
     # Code does). After the timeout, uvicorn cancels those requests.
     server = _Server(uvicorn.Config(app, host=host, port=port, timeout_graceful_shutdown=3))
     # The cancelled requests are expected on shutdown, not errors worth a traceback.
-    logging.getLogger("uvicorn.error").addFilter(lambda r: not _cancelled(r))
+    logging.getLogger("uvicorn.error").addFilter(
+        lambda r: not (r.exc_info and isinstance(r.exc_info[1], asyncio.CancelledError)))
     try:
         server.run()
     except KeyboardInterrupt:  # uvicorn re-raises the Ctrl-C after its clean shutdown

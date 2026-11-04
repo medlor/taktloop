@@ -122,10 +122,8 @@ class Tx:
         return self._one(TaskRow, "SELECT * FROM tasks WHERE id=?", (id,))
 
     def list_tasks(self, statuses: Collection[str]) -> list[TaskRow]:
-        statuses = list(statuses)
-        return self._all(
-            TaskRow, f"SELECT * FROM tasks WHERE status IN ({_marks(statuses)}) ORDER BY id",
-            tuple(statuses))
+        return self._all(TaskRow, f"SELECT * FROM tasks WHERE status IN ({_marks(statuses)}) ORDER BY id",
+                         tuple(statuses))
 
     def set_task_status(self, id: int, status: str) -> None:
         self._c.execute("UPDATE tasks SET status=? WHERE id=?", (status, id))
@@ -141,31 +139,23 @@ class Tx:
         return self._one(StepRunRow, "SELECT * FROM step_runs WHERE id=?", (id,))
 
     def current_step_run(self, task_id: int) -> StepRunRow | None:
-        return self._one(
-            StepRunRow,
-            "SELECT * FROM step_runs WHERE task_id=? AND status IN ('open','claimed') "
-            "ORDER BY id DESC LIMIT 1", (task_id,))
+        return self._one(StepRunRow, "SELECT * FROM step_runs WHERE task_id=? AND status IN ('open','claimed') "
+                         "ORDER BY id DESC LIMIT 1", (task_id,))
 
     def last_step_run(self, task_id: int, step: str) -> StepRunRow | None:
-        return self._one(
-            StepRunRow,
-            "SELECT * FROM step_runs WHERE task_id=? AND step=? ORDER BY id DESC LIMIT 1",
-            (task_id, step))
+        return self._one(StepRunRow, "SELECT * FROM step_runs WHERE task_id=? AND step=? ORDER BY id DESC LIMIT 1",
+                         (task_id, step))
 
     def list_step_runs(self, task_id: int) -> list[StepRunRow]:
         return self._all(StepRunRow, "SELECT * FROM step_runs WHERE task_id=? ORDER BY id",
                          (task_id,))
 
     def step_runs_with_status(self, statuses: Collection[str]) -> list[StepRunRow]:
-        statuses = list(statuses)
-        return self._all(
-            StepRunRow,
-            f"SELECT * FROM step_runs WHERE status IN ({_marks(statuses)}) ORDER BY id",
-            tuple(statuses))
+        return self._all(StepRunRow, f"SELECT * FROM step_runs WHERE status IN ({_marks(statuses)}) ORDER BY id",
+                         tuple(statuses))
 
     def update_step_run(self, id: int, /, **fields: Any) -> None:
-        unknown = set(fields) - _STEP_RUN_FIELDS
-        if unknown:
+        if unknown := set(fields) - _STEP_RUN_FIELDS:
             raise ValueError(f"unknown step_run fields: {sorted(unknown)}")
         if not fields:
             return

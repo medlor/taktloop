@@ -2,13 +2,12 @@
 
 import json
 import os
-import sys
 from pathlib import Path
 
 import anyio
 import yaml
 
-from taktloop.cli_commands import CoreUnreachable, TokenRejected, ToolRejected, _call_tool
+from taktloop.cli_commands import CoreUnreachable, TokenRejected, ToolRejected, _call_tool, _fail
 from taktloop.config import load_config
 from taktloop.external import read_dotenv
 
@@ -41,16 +40,12 @@ def _tickets(ns) -> int:
         print(json.dumps(anyio.run(lambda: _call_tool(server.url, TOOLS[ns.sub], args, token,
                                                       client="taktloop-tickets-cli")), indent=2))
     except ToolRejected as e:
-        print(f"rejected: {e}", file=sys.stderr)
-        return 1
+        return _fail(f"rejected: {e}", 1)
     except CoreUnreachable:
-        print(f"ticket stand-in not reachable at {server.url} — start it with `uv run taktloop tickets serve`",
-              file=sys.stderr)
-        return 2
+        return _fail(f"ticket stand-in not reachable at {server.url} — "
+                     "start it with `uv run taktloop tickets serve`")
     except TokenRejected:
-        print("taktloop: the stand-in refused the token (401)", file=sys.stderr)
-        return 2
+        return _fail("taktloop: the stand-in refused the token (401)")
     except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError) as e:
-        print(f"taktloop: {e}", file=sys.stderr)
-        return 2
+        return _fail(f"taktloop: {e}")
     return 0

@@ -22,21 +22,15 @@ class GateOps(ServiceBase):
                        "reason": reason, "target": target, "artifacts": []}
 
         def body(tx: Tx, ids: _Ids) -> TaskSummary:
-            task = tx.get_task(task_id)
-            if task is None:
-                raise Rejected(f"unknown task {task_id}")
-            ids.task_id = task_id
-            run = tx.current_step_run(task_id)
-            run = self._expire(tx, run) if run else None
-            wf = self._wf_of(tx, task_id)
-            if run is None or wf.step(run.step).kind != "human_gate" or run.status != "open":
+            self._task(tx, ids, task_id)
+            run, wf = self._current(tx, task_id), self._wf_of(tx, task_id)
+            step = wf.step(run.step) if run else None
+            if run is None or step.kind != "human_gate" or run.status != "open":
                 raise Rejected(f"task {task_id} is not at a gate")
-            ids.step_run_id = run.id
-            names["gate"] = run.step
-            require(caller, "decide_gate", wf.step(run.step))
+            ids.step_run_id, names["gate"] = run.id, run.step
+            require(caller, "decide_gate", step)
             if gate is not None and gate != run.step:
                 raise Rejected(f"task {task_id} is at gate {run.step}, not {gate}")
-            step = wf.step(run.step)
             approved = approved_step(wf, step, None)
             self._separate(tx, task_id,
                            lambda recs: check_approval(approved, caller.subject, recs))
@@ -75,10 +69,7 @@ class GateOps(ServiceBase):
         names: dict = {"task_id": task_id, "review_step": review_step, "reason": reason}
 
         def body(tx: Tx, ids: _Ids) -> TaskSummary:
-            task = tx.get_task(task_id)
-            if task is None:
-                raise Rejected(f"unknown task {task_id}")
-            ids.task_id = task_id
+            self._task(tx, ids, task_id)
             wf = self._wf_of(tx, task_id)
             review = wf.steps.get(review_step)
             if review is None or not review.is_review:
@@ -87,8 +78,7 @@ class GateOps(ServiceBase):
             runs = tx.list_step_runs(task_id)
             verdicts = [r for r in runs
                         if r.step == review.name and r.outcome in ("pass", "issues")]
-            run = tx.current_step_run(task_id)
-            run = self._expire(tx, run) if run else None
+            run = self._current(tx, task_id)
             if run is None or not (run.step in (review.name, review.on_escalate) or (
                     run.step == review.review_of and verdicts and run.id > verdicts[0].id)):
                 raise Rejected(f"task {task_id} has no review of {review.review_of} to override")
