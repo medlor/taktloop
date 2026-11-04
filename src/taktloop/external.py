@@ -83,9 +83,9 @@ def make_checker(servers: Mapping[str, ExternalServer], environ: Mapping[str, st
 
     def check(name: str, tool: str, args: dict[str, str]) -> dict:
         result = go(name, lambda client: client.call_tool(tool, args))
-        if result.is_error:
-            raise ToolFailed(result.content[0].text if result.content else "unknown error")
-        return read_result(result.structured_content, [c.text for c in result.content])
+        if result.is_error:  # the first text block; image, audio and resource blocks have none
+            raise ToolFailed(next((t for c in result.content if (t := getattr(c, "text", ""))), "unknown error"))
+        return read_result(result.structured_content, [getattr(c, "text", "") for c in result.content])
 
     return check
 

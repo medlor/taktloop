@@ -216,3 +216,21 @@ def test_run_command_turns_bad_command_into_hook_failed(tmp_path):
     for bad in ("", './x "q', "/nonexistent/hook"):
         with pytest.raises(HookFailed, match="cannot run"):
             run_command(bad, {}, tmp_path, {}, [])
+
+
+def test_non_text_tool_error_counts_and_does_not_block(runner, monkeypatch):
+    import taktloop.external as external
+    from types import SimpleNamespace
+
+    image = SimpleNamespace(type="image", data="", mimeType="image/png")
+    result = SimpleNamespace(is_error=True, content=[image], structured_content=None)
+    monkeypatch.setattr(external, "_remote", lambda *a: lambda name, action: result)
+    check, seen = external.make_checker({}, {}, {}), []
+    runner.r.call = lambda server, tool, args: seen.append(tool) or check(server, tool, args)
+    runner.feed.add("step_opened", step="design", values=VALUES)
+    runner.feed.add("task_closed", detail={"status": "done"}, values=VALUES)
+    for _ in range(3):
+        runner.tick()
+    assert seen == ["update_status", "close_ticket"] * 3
+    assert runner.log == ["hook ticket-status gave up on event 1: unknown error",
+                          "hook ticket-close gave up on event 2: unknown error"]

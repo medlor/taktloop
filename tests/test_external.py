@@ -112,3 +112,19 @@ def test_unconfigured_server_is_unavailable_not_a_keyerror():
         make_tool_lister({}, {}, {})("nope")
     with pytest.raises(CheckUnavailable, match="nope is not configured"):
         make_checker({}, {}, {})("nope", "t", {})
+
+
+def test_non_text_content_is_not_an_attribute_error(monkeypatch):
+    import taktloop.external as external
+    from types import SimpleNamespace
+
+    from taktloop.checks import ToolFailed
+    image = SimpleNamespace(type="image", data="", mimeType="image/png")  # no .text
+    result = SimpleNamespace(is_error=True, content=[image], structured_content=None)
+    monkeypatch.setattr(external, "_remote", lambda *a: lambda name, action: result)
+    check = make_checker({}, {}, {})
+    with pytest.raises(ToolFailed, match="unknown error"):
+        check("github", "t", {})
+    result.is_error = False
+    with pytest.raises(CheckUnavailable, match="not a JSON object"):
+        check("github", "t", {})
