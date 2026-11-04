@@ -84,7 +84,7 @@ def prepare(cfg: FactoryConfig) -> Service:
     service = Service(store, workflow, timedelta(minutes=cfg.lease_minutes),
                       separation=cfg.separation, checker=build_checker(cfg),
                       servers=cfg.mcp_servers.keys(), workflow_path=cfg.workflow_path,
-                      tools_check=tools_check, availability=avail)
+                      tools_check=tools_check, availability=avail, sync=cfg.sync)
     for server, problem in avail.problems().items():
         logging.getLogger("taktloop").warning("%s %s", server, problem)
     if service.live_version != workflow.version:

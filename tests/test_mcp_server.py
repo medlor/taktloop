@@ -16,7 +16,7 @@ TOOLS = {
     "create_task", "list_tasks", "get_task", "list_open_steps", "claim_step",
     "get_step_context", "heartbeat", "complete_step", "release_step", "decide_gate",
     "override_review", "sweep", "report_stall", "list_events", "get_workflow", "put_step",
-    "remove_step", "set_start", "discard_draft", "approve_workflow", "get_factory",
+    "remove_step", "set_start", "discard_draft", "approve_workflow", "get_factory", "check_sync",
 }  # fmt: skip
 
 pytestmark = pytest.mark.anyio

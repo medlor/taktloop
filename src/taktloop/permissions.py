@@ -17,7 +17,7 @@ ROLES = {
     "claim_step": STEP, "heartbeat": STEP, "complete_step": STEP, "release_step": STEP,
     "decide_gate": STEP,
     "override_review": "approver",
-    "sweep": "orchestrator", "list_events": "orchestrator", "report_stall": "orchestrator",
+    **dict.fromkeys(("sweep", "list_events", "report_stall", "check_sync"), "orchestrator"),
     "release_step --force": "factory_owner",
     "get_workflow": ANY, "get_factory": ANY, "approve_workflow": "factory_owner",
     **dict.fromkeys(("put_step", "remove_step", "set_start", "discard_draft"),

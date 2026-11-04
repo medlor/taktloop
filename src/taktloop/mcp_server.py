@@ -173,6 +173,11 @@ def build_server(service: Service, factory: str, verifier: JwtVerifier | None,
         return service.report_stall(caller(ctx), step_id, reason)
 
     @tool
+    def check_sync(ctx: Context, task_id: int) -> TaskSummary:
+        """Orchestrator only: read the task's ticket and flag it if closed or deleted."""
+        return service.check_sync(caller(ctx), task_id)
+
+    @tool
     def get_workflow(ctx: Context, version: int | None = None, draft: bool = False) -> WorkflowView:
         """Show the live workflow (or a version, or the draft) as data with its problem list."""
         return service.get_workflow(caller(ctx), version, draft)

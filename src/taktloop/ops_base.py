@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 from taktloop.availability import Availability
+from taktloop.config import SyncConfig
 from taktloop.external import Checker
 from taktloop.models import Artifact, Claim, TaskSummary
 from taktloop.permissions import require
@@ -57,10 +58,11 @@ class ServiceBase:
                  checker: Checker | None = None, servers: Collection[str] = (),
                  workflow_path: Path | None = None,
                  tools_check: Callable[[Workflow], str | None] | None = None,
-                 availability: Availability | None = None) -> None:
+                 availability: Availability | None = None, sync: Mapping[str, SyncConfig] = {}) -> None:
         self._servers, self._workflow_path, self._tools_check = set(servers), workflow_path, tools_check
         self._store, self._lease, self._clock = store, lease, clock
         self._separation, self._checker, self._availability = separation, checker, availability
+        self._sync = sync
         self._versions: dict[int, Workflow] = {}
         self._reconcile(workflow)
 
@@ -180,7 +182,18 @@ class ServiceBase:
                 run.status if run else "open", _holder(run) if run else None,
                 run.lease_expires_at if run else None,
                 wf.escalating_review(run.step) if run else None,
-                _stall_reason(tx, run) if run else None))
+                _stall_reason(tx, run) if run else None,
+                "; ".join(self._sync_flags(tx, task.id).values()) or None))
+
+    def _sync_flags(self, tx: Tx, task_id: int) -> dict[str, str]:
+        """name -> reason of each out-of-sync flag: the latest out_of_sync/in_sync event per name."""
+        flags: dict[str, str] = {}
+        for e in tx.list_events(task_id):
+            if e.operation == "out_of_sync":
+                flags[e.detail["name"]] = e.detail["reason"]
+            elif e.operation == "in_sync":
+                flags.pop(e.detail["name"], None)
+        return flags
 
     def _open_step(self, tx: Tx, task_id: int, step: str) -> int:
         """Open a run of `step`, recording step_opened. A routed agent step in round 1 of a task

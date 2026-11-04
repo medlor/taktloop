@@ -43,7 +43,7 @@ def check_artifacts(required: Iterable[str], artifacts: list[ArtifactIn]) -> Non
 
 def waiting_for(step: Step | None, status: str = "open", claimed_by: str | None = None,
                 lease_expires_at: datetime | None = None, escalated: Step | None = None,
-                stalled: str | None = None) -> str:
+                stalled: str | None = None, out_of_sync: str | None = None) -> str:
     """Spec 6.6 text for the current step run; step None means the task is done.
     `escalated` is the review step whose escalation gate `step` is; `stalled` the reason the
     orchestrator reported the run stalled."""
@@ -60,7 +60,8 @@ def waiting_for(step: Step | None, status: str = "open", claimed_by: str | None 
         text = f"waiting for the orchestrator to run {step.name}"
     else:
         text = f"waiting for a {step.role} to pick up {step.name}"
-    return f"{text} — stalled: {stalled}" if stalled else text
+    text = f"{text} — stalled: {stalled}" if stalled else text
+    return f"{text} — out of sync: {out_of_sync}" if out_of_sync else text
 
 
 def latest_rounds(artifacts: Iterable[Artifact], exclude_step: str | None = None) -> list[Artifact]:
