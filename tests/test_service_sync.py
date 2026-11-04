@@ -101,3 +101,18 @@ def test_sync_skips_task_without_ticket(env):
 def test_check_sync_needs_orchestrator(env):
     with pytest.raises(Rejected, match="requires role orchestrator"):
         env.svc.check_sync(REQ, env.task)
+
+
+def test_unknown_task_rejected(env):
+    with pytest.raises(Rejected, match="unknown task 99"):
+        env.svc.check_sync(ORCH, 99)
+
+
+def test_closed_task_not_checked(env):
+    opened(env)
+    with env.svc._store.transaction() as tx:
+        tx.set_task_status(env.task, "cancelled")
+    env.calls.clear()
+    env.ticket["closed"] = True
+    env.svc.check_sync(ORCH, env.task)
+    assert env.calls == [] and "out_of_sync" not in ops(env)
