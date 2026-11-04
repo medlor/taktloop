@@ -233,7 +233,7 @@ class Store:
             elif version != SCHEMA_VERSION:
                 raise SchemaMismatch(
                     f"{path} has schema version {version}, expected {SCHEMA_VERSION}; delete "
-                    f"{path} to start fresh (M1 data is not migrated)")
+                    f"{path} to start fresh (older databases are not migrated; delete .taktloop/hooks.cursor too)")
         except BaseException:
             self._conn.close()
             raise

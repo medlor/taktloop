@@ -1,4 +1,5 @@
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -44,13 +45,20 @@ def test_claude_auth_missing_binary():
 
 
 def test_command_is_read_only():
-    cmd = command(42)
+    cmd = command(42, Path("/f"))
     assert cmd[:3] == ["claude", "-p", "work on taktloop step 42"]
     assert cmd[cmd.index("--permission-mode") + 1] == "dontAsk"
     split = cmd.index("--disallowedTools")
     assert "Edit" in cmd[split:] and "Edit" not in cmd[:split]
     assert cmd[cmd.index("--setting-sources") + 1] == "project,local"
     assert "Read(./.taktloop/**)" in cmd[split:] and "Read(./.env)" in cmd[split:]
+
+
+def test_command_denies_the_factory_secrets_by_absolute_path():
+    cmd = command(42, Path("/home/x/factory"))
+    denied = cmd[cmd.index("--disallowedTools"):]
+    assert {"Read(//home/x/factory/.taktloop/**)", "Read(//home/x/factory/.env)",
+            "Read(./.taktloop/**)", "Read(./.env)"} <= set(denied)
 
 
 def test_ensure_commits_fetches_once_when_missing(tmp_path):
@@ -70,7 +78,7 @@ def test_ensure_commits_fetches_once_when_missing(tmp_path):
 
 def test_start_writes_numbered_logs(tmp_path, monkeypatch):
     monkeypatch.setattr(headless, "claude_auth", lambda: SUB)
-    monkeypatch.setattr(headless, "command", lambda step_id: [sys.executable, "-c", "print('hi')"])
+    monkeypatch.setattr(headless, "command", lambda *a: [sys.executable, "-c", "print('hi')"])
     for n in (1, 2):
         proc, log = start(7, "tok", tmp_path, {}, [])
         proc.wait()
@@ -79,15 +87,18 @@ def test_start_writes_numbered_logs(tmp_path, monkeypatch):
 
 def test_start_without_claude(tmp_path, monkeypatch):
     monkeypatch.setattr(headless, "claude_auth", lambda: SUB)
-    monkeypatch.setattr(headless, "command", lambda step_id: ["/nonexistent/claude"])
+    monkeypatch.setattr(headless, "command", lambda *a: ["/nonexistent/claude"])
     with pytest.raises(StartFailed, match="claude is not on PATH"):
         start(7, "tok", tmp_path, {}, [])
 
 
 def test_start_in_checkout_logs_elsewhere(tmp_path, monkeypatch):
     monkeypatch.setattr(headless, "claude_auth", lambda: SUB)
-    monkeypatch.setattr(headless, "command", lambda step_id: [sys.executable, "-c", "import os; print(os.getcwd())"])
     (checkout := tmp_path / "product").mkdir()
-    proc, log = start(7, "tok", checkout, {}, [], tmp_path / "factory" / "runs")
+    seen = []
+    monkeypatch.setattr(headless, "command", lambda step_id, factory: seen.append(factory) or [
+        sys.executable, "-c", "import os; print(os.getcwd())"])
+    proc, log = start(7, "tok", checkout, {}, [], tmp_path / "factory")
     proc.wait()
-    assert log == tmp_path / "factory" / "runs" / "7-1.log" and log.read_text().strip() == str(checkout)
+    assert log == tmp_path / "factory" / ".taktloop" / "runs" / "7-1.log"
+    assert log.read_text().strip() == str(checkout) and seen == [tmp_path / "factory"]

@@ -97,9 +97,8 @@ class Orchestrator:
         return self.versions[version]
 
     def needed(self) -> dict[str, set[str]]:
-        """server -> tools the live workflow's code steps and the hooks call."""
-        calls = [h.call for h in self.hooks.hooks if h.call] if self.hooks else []
-        extra = {server: {t for s, t, _ in calls if s == server} for server, _, _ in calls}
+        """server -> tools the live workflow's code steps call; hook servers only need to answer."""
+        extra = {h.call[0]: set() for h in self.hooks.hooks if h.call} if self.hooks else {}
         return needed_tools(self._workflow(), ("call",), extra=extra)
 
     def _sync(self) -> None:
@@ -194,8 +193,7 @@ def run(cfg: FactoryConfig) -> None:
                        partial(run_command, cwd=cfg.root, environ=os.environ, secret_envs=secrets), log)
     orch = Orchestrator(
         cfg, CoreClient(cfg.url, o.identity, cfg.credentials).call, external,
-        lambda sid, token, shas: headless.start(sid, token, cfg.product_checkout, os.environ, shas,
-                                                state / "runs"),
+        lambda sid, token, shas: headless.start(sid, token, cfg.product_checkout, os.environ, shas, cfg.root),
         partial(fetch_token, credentials_dir=cfg.credentials), log=log, hooks=hooks)
     orch.avail = Availability(make_tool_lister(cfg.mcp_servers, os.environ, dotenv), orch.needed)
     print(f"taktloop orchestrator for factory '{cfg.factory}' as {o.identity}", flush=True)

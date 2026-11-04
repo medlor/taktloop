@@ -92,6 +92,10 @@ class ToolFailed(CheckUnavailable):
     """The tool itself answered with an error."""
 
 
+class BadResult(CheckUnavailable):
+    """The tool answered, but not with a JSON object."""
+
+
 @dataclass(frozen=True)
 class Mismatch:
     field: str
@@ -136,7 +140,7 @@ def read_result(structured: dict | None, texts: list[str]) -> dict:
     except (IndexError, ValueError):
         parsed = None
     if not isinstance(parsed, dict):
-        raise CheckUnavailable("result is not a JSON object")
+        raise BadResult("result is not a JSON object")
     return parsed
 
 

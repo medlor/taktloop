@@ -4,12 +4,12 @@ from pathlib import Path
 import pytest
 
 from taktloop import orchestrator
-from taktloop.checks import CheckDecl
+from taktloop.checks import CheckDecl, ToolFailed
 from taktloop.cli_commands import CoreUnreachable, TokenRejected, ToolRejected
 from taktloop.config import FactoryConfig, OrchestratorConfig, SyncConfig
 from taktloop.availability import Availability
 from taktloop.headless import StartFailed
-from taktloop.hooks import Hook
+from taktloop.hooks import Hook, HookRunner
 from taktloop.models import ArtifactIn
 from taktloop.orchestrator import CoreClient, Orchestrator
 from taktloop.service import Caller, Rejected, Service
@@ -463,16 +463,26 @@ def test_held_code_step_keeps_its_claim_while_server_unavailable(env):
     assert env.svc.sweep(ORCH)[0].claimed_by == "orchestrator"
 
 
-def test_hook_tools_checked_on_the_first_tick(env):
-    class Reloading(Hooks):
-        hooks = []
+def test_hook_with_a_missing_tool_does_not_stop_a_code_step(env, tmp_path):
+    approve(env, open_ticket=OPEN_TICKET, start="open_ticket")
+    tries = []
+    (tmp_path / "hooks.yaml").write_text(
+        "hooks: [{name: s, on: step_opened, step: open_ticket, call: {mcp_server: tickets, tool: update_status}}]")
 
-        def reload(self):
-            self.hooks = [Hook("s", "step_opened", call=("tickets", "update_status", {}))]
+    def call(server, tool, args):
+        if tool == "update_status":
+            tries.append(tool)
+            raise ToolFailed("Unknown tool: update_status")
+        return env.gh(server, tool, args)
 
-    hooks = Reloading()
+    hooks = HookRunner(tmp_path / "hooks.yaml", tmp_path / "hooks.cursor", {"tickets"}, call, None, env.log.append)
     orch = env.new(hooks=hooks)
     orch.avail = Availability(lambda server: {"tickets": {"create_ticket"}}.get(server, {"actions_list"}), orch.needed)
     orch.tick()
-    assert hooks.ticks[0][2] is True
-    assert env.log == ["not available: tickets missing tool update_status"]
+    assert orch.needed()["tickets"] == {"create_ticket"}
+    t = env.svc.create_task(REQ, "T1")
+    for _ in range(3):
+        orch.tick()
+    assert step(env, t) == "build" and not [line for line in env.log if "not available" in line]
+    assert len(tries) == 3 and env.log[-1].startswith("hook s gave up on event ")
+    assert env.log[-1].endswith(": Unknown tool: update_status")

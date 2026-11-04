@@ -115,7 +115,7 @@ def test_schema_v1_file_is_refused_with_delete_hint(tmp_path):
     with pytest.raises(SchemaMismatch) as e:
         Store(path)
     assert str(e.value) == (f"{path} has schema version 1, expected 3; delete {path} to start "
-                            "fresh (M1 data is not migrated)")
+                            "fresh (older databases are not migrated; delete .taktloop/hooks.cursor too)")
 
 
 def test_events_ordered_and_detail_json(store):

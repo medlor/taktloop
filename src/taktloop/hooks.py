@@ -10,7 +10,7 @@ from typing import Any
 
 import yaml
 
-from taktloop.checks import CheckUnavailable, ToolFailed, _args, _server_tool, substitute
+from taktloop.checks import BadResult, CheckUnavailable, ToolFailed, _args, _server_tool, substitute
 from taktloop.external import Checker
 
 class HookFailed(Exception):
@@ -60,7 +60,8 @@ def parse_hooks(data: Any, servers: Collection[str]) -> list[Hook]:
 
 def run_command(command: str, payload: dict, cwd: Path, environ: Mapping[str, str],
                 secret_envs: Collection[str], timeout: float = 30.0) -> None:
-    env = {k: v for k, v in environ.items() if not k.startswith("TAKTLOOP_") and k not in secret_envs}
+    env = {k: v for k, v in environ.items()
+           if not k.startswith("TAKTLOOP_") and k not in {*secret_envs, "GH_TOKEN", "GITHUB_TOKEN"}}
     try:
         done = subprocess.run(shlex.split(command), input=json.dumps(payload), text=True, cwd=cwd, env=env,
                               capture_output=True, timeout=timeout)
@@ -69,7 +70,7 @@ def run_command(command: str, payload: dict, cwd: Path, environ: Mapping[str, st
     except (OSError, ValueError, IndexError) as e:  # IndexError: an empty command line
         raise HookFailed(f"cannot run {command!r}: {type(e).__name__}") from None
     if done.returncode:
-        raise HookFailed(f"exit {done.returncode}")
+        raise HookFailed(": ".join([f"exit {done.returncode}", *done.stderr.strip().splitlines()[-1:]]))
 
 
 class HookRunner:
@@ -129,6 +130,9 @@ class HookRunner:
             return False
         try:
             self.call(h.call[0], h.call[1], args) if h.call else self.run_command(h.command, ev)
+            return True
+        except BadResult:  # the call happened: its side effect is done
+            self.log(f"hook {h.name}: {h.call[1]} answered without a JSON object; taken as done")
             return True
         except (ToolFailed, HookFailed) as e:
             reason = str(e)

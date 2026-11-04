@@ -246,11 +246,14 @@ replay). Format: [workflow-reference.md](workflow-reference.md#hooks).
   commit is recorded, not verified.
 - **Headless runs** (`.taktloop/runs/<step>-<n>.log`) are read-only: they may
   read files and run `git diff|log|show|rev-parse`, ignore your user-level
-  Claude settings, and cannot read `.taktloop/` or `.env`. With a claude.ai
+  Claude settings, and cannot read the factory's `.taktloop/` or `.env` (denied
+  by absolute path, since they start in the product checkout). With a claude.ai
   login the orchestrator drops `ANTHROPIC_API_KEY` from their environment;
   without either, the start fails and counts towards the stall rule.
 - **No migrations.** A database from an older version is refused at start:
-  delete `.taktloop/factory.db` and start again.
+  delete both `.taktloop/factory.db` and `.taktloop/hooks.cursor` and start
+  again. A cursor left behind points past the new database's events, and the
+  hooks would never fire.
 
 ## 10. Lightweight budget (PRD §5)
 
@@ -259,7 +262,7 @@ Measured at the end of M4:
 | Criterion | Target | Measured |
 | --- | --- | --- |
 | Components | fewer than 10 | 6: core (MCP server, HTTP API, SQLite store), orchestrator, ticket stand-in, dev issuer, CLI, skills (bridge, triage, plan review, breakout) |
-| Code size | at most ~4,300 lines under `src/` | 4,206 lines (`wc -l` over every `.py` file under `src/`) |
+| Code size | at most ~4,300 lines under `src/` | 4,213 lines (`wc -l` over every `.py` file under `src/`) |
 | Dependencies | at most ~10 runtime dependencies | 3 direct: `mcp`, `pyyaml`, `pyjwt[crypto]` |
 | Runtime | the core is one process with one SQLite file | 4 processes with `taktloop up` (issuer, tickets, core, orchestrator); the core has one SQLite file, the stand-in its own |
 | Setup | a new factory in under 30 minutes | _to be timed by @Tobias, following only these docs_ |

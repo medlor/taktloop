@@ -188,14 +188,17 @@ def test_command_hook_gets_json_without_tokens(tmp_path):
                       "open('out.json', 'w').write(json.dumps({'stdin': json.load(sys.stdin), 'env': dict(os.environ)}))\n"
                       "sys.exit(int(os.environ.get('EXIT', '0')))\n")
     environ = {"PATH": os.environ["PATH"], "TAKTLOOP_TOKEN": "t", "TAKTLOOP_GITHUB_TOKEN": "g",
-               "GITHUB_PAT": "p", "HOME": "/home/x"}
+               "GITHUB_PAT": "p", "GH_TOKEN": "h", "GITHUB_TOKEN": "t", "HOME": "/home/x"}
     run_command(f"{sys.executable} hook.py", {"operation": "report_stall"}, tmp_path, environ, ["GITHUB_PAT"])
     out = json.loads((tmp_path / "out.json").read_text())
     assert out["stdin"] == {"operation": "report_stall"}
-    assert not {"TAKTLOOP_TOKEN", "TAKTLOOP_GITHUB_TOKEN", "GITHUB_PAT"} & set(out["env"])
+    assert not {"TAKTLOOP_TOKEN", "TAKTLOOP_GITHUB_TOKEN", "GITHUB_PAT", "GH_TOKEN", "GITHUB_TOKEN"} & set(out["env"])
     assert out["env"]["HOME"] == "/home/x"
-    with pytest.raises(HookFailed, match="exit 3"):
+    with pytest.raises(HookFailed, match="^exit 3$"):
         run_command(f"{sys.executable} hook.py", {}, tmp_path, {**environ, "EXIT": "3"}, [])
+    (tmp_path / "fail.py").write_text("import sys\nsys.stderr.write('warn\\nno such ticket\\n')\nsys.exit(2)\n")
+    with pytest.raises(HookFailed, match="^exit 2: no such ticket$"):
+        run_command(f"{sys.executable} fail.py", {}, tmp_path, environ, [])
     with pytest.raises(HookFailed, match="timed out after 0.2 s"):
         run_command(f"{sys.executable} -c 'import time; time.sleep(5)'", {}, tmp_path, environ, [], timeout=0.2)
 
@@ -234,3 +237,20 @@ def test_non_text_tool_error_counts_and_does_not_block(runner, monkeypatch):
     assert seen == ["update_status", "close_ticket"] * 3
     assert runner.log == ["hook ticket-status gave up on event 1: unknown error",
                           "hook ticket-close gave up on event 2: unknown error"]
+
+
+def test_non_json_tool_result_counts_as_done(runner, monkeypatch):
+    import taktloop.external as external
+    from types import SimpleNamespace
+
+    text = SimpleNamespace(type="text", text="Status updated")
+    result = SimpleNamespace(is_error=False, content=[text], structured_content=None)
+    monkeypatch.setattr(external, "_remote", lambda *a: lambda name, action: result)
+    check, seen = external.make_checker({}, {}, {}), []
+    runner.r.call = lambda server, tool, args: seen.append(tool) or check(server, tool, args)
+    runner.feed.add("step_opened", step="design", values=VALUES)
+    runner.tick()
+    runner.tick()
+    assert seen == ["update_status"]
+    assert runner.log == ["hook ticket-status: update_status answered without a JSON object; taken as done"]
+    assert json.loads(runner.cursor.read_text())["ticket-status"] == 1

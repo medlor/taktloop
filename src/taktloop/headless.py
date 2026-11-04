@@ -31,9 +31,10 @@ def child_env(environ: Mapping[str, str], auth: dict | None, token: str) -> dict
     return env
 
 
-def command(step_id: int) -> list[str]:
-    return ["claude", "-p", f"work on taktloop step {step_id}", "--permission-mode", "dontAsk",
-            "--setting-sources", "project,local", "--allowedTools", *READ_ONLY_TOOLS, "--disallowedTools", *DENIED_TOOLS]
+def command(step_id: int, factory: Path) -> list[str]:
+    secrets = [f"Read(/{factory.resolve()}/{p})" for p in (".taktloop/**", ".env")]  # `//`: an absolute path
+    return ["claude", "-p", f"work on taktloop step {step_id}", "--permission-mode", "dontAsk", "--setting-sources",
+            "project,local", "--allowedTools", *READ_ONLY_TOOLS, "--disallowedTools", *DENIED_TOOLS, *secrets]
 
 
 def ensure_commits(root: Path, shas: Iterable[str], run: Callable = subprocess.run) -> None:
@@ -44,18 +45,18 @@ def ensure_commits(root: Path, shas: Iterable[str], run: Callable = subprocess.r
 
 
 def start(step_id: int, token: str, root: Path, environ: Mapping[str, str],
-          shas: Iterable[str], runs: Path | None = None) -> tuple[subprocess.Popen, Path]:
-    """Run in `root` (the product checkout); the log goes to `runs` (default: root/.taktloop/runs)."""
+          shas: Iterable[str], factory: Path | None = None) -> tuple[subprocess.Popen, Path]:
+    """Run in `root` (the product checkout); the log goes to `factory` (default: root)/.taktloop/runs."""
     ensure_commits(root, shas)
     env = child_env(environ, claude_auth(), token)
-    runs = runs or root / ".taktloop" / "runs"
+    runs = (factory := factory or root) / ".taktloop" / "runs"
     runs.mkdir(parents=True, exist_ok=True)
     n = 1
     while (log := runs / f"{step_id}-{n}.log").exists():
         n += 1
     with log.open("wb") as out:
         try:
-            proc = subprocess.Popen(command(step_id), cwd=root, env=env, stdout=out,
+            proc = subprocess.Popen(command(step_id, factory), cwd=root, env=env, stdout=out,
                                     stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True)
         except FileNotFoundError:
             raise StartFailed("claude is not on PATH") from None
