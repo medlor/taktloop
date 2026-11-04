@@ -33,6 +33,8 @@ def routes(ops: dict, factory: str, verifier) -> list[Route]:
         try:
             result = await to_thread.run_sync(partial(checked[tool], caller, **args))
         except ValidationError as e:
+            if e.title != checked[tool].__qualname__:  # raised inside the operation, not by its arguments
+                raise
             return JSONResponse({"reason": "; ".join(f"{'.'.join(map(str, x['loc']))}: {x['msg']}"
                                                      for x in e.errors())}, 422)
         except Rejected as e:

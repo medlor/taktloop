@@ -89,3 +89,13 @@ def test_operation_runs_off_the_event_loop():
         return TaskList(tasks=[])
     client = TestClient(Starlette(routes=routes({"probe": probe}, "taktloop", FakeVerifier())))
     assert client.post("/api/probe", headers={"Authorization": "Bearer good"}).status_code == 200
+
+
+def test_internal_validation_error_is_500_not_422():
+    from taktloop.models import TaskList
+
+    def bad_result(caller):
+        return TaskList.model_validate({"tasks": 1})
+    client = TestClient(Starlette(routes=routes({"bad_result": bad_result}, "taktloop", FakeVerifier())),
+                        raise_server_exceptions=False)
+    assert client.post("/api/bad_result", headers={"Authorization": "Bearer good"}).status_code == 500
